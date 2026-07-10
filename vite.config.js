@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   build: {
+    outDir: "dist/client",
     rollupOptions: {
       input: {
         home: resolve(import.meta.dirname, "index.html"),
