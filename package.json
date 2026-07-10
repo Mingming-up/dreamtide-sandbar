@@ -1,0 +1,17 @@
+{
+  "name": "tropical-sandcastle",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:stable": "vite --host 127.0.0.1 --port 5175 --strictPort",
+    "build": "vite build && node scripts/prepare-sites-output.mjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "three": "^0.167.1",
+    "vite": "^5.4.11"
+  },
+  "devDependencies": {}
+}
