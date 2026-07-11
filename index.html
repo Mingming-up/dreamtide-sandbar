@@ -14,10 +14,11 @@
     <title>梦幻沙洲 | Tropical Sandcastle</title>
   </head>
   <body>
-    <main>
-      <section class="hero" id="top" aria-labelledby="hero-title">
+    <main class="page-stage" data-active-page="0">
+      <section class="hero page-panel is-active" id="top" data-page="0" aria-labelledby="hero-title">
         <div class="ambient ambient-one"></div>
         <div class="ambient ambient-two"></div>
+        <div class="hero-tide-lines" aria-hidden="true"><i></i><i></i><i></i></div>
 
         <nav class="nav" aria-label="主导航">
           <a class="brand" href="#top" aria-label="梦幻沙洲首页">
@@ -28,7 +29,7 @@
         </nav>
 
         <div class="hero-grid">
-          <div class="hero-copy">
+          <div class="hero-copy hero-reveal">
             <p class="eyebrow"><span></span> TROPICAL SANDBAR · 3D BUILDING GAME</p>
             <h1 id="hero-title">梦幻<em>沙洲</em></h1>
             <p class="hero-tagline">在潮汐与星光之间，<br />建造你的沙滩城堡。</p>
@@ -45,15 +46,16 @@
         <a class="scroll-cue" href="#world" aria-label="继续向下探索"><span></span> 向下探索</a>
       </section>
 
-      <section class="world-section" id="world" aria-labelledby="world-title">
-        <header class="section-heading">
+      <section class="world-section page-panel is-after" id="world" data-page="1" aria-labelledby="world-title" aria-hidden="true">
+        <div class="shore-transition" aria-hidden="true"></div>
+        <header class="section-heading reveal-on-scroll">
           <p class="eyebrow"><span></span> 你的沙洲，你来塑造</p>
           <h2 id="world-title">这里没有标准答案，<br />只有不断变化的海岸线。</h2>
           <p>每一件建筑、每一次潮涨潮落，都会让沙洲变成不同的样子。</p>
         </header>
 
         <div class="feature-grid">
-          <article class="feature-card is-active" role="button" tabindex="0" aria-pressed="true" data-title="自由建造" data-detail="从圆塔、城墙到东方楼阁和菠萝小屋，把脑海里的海岛地标一件件放上沙洲。">
+          <article class="feature-card is-active reveal-on-scroll" style="--reveal-delay: 0ms" role="button" tabindex="0" aria-pressed="true" data-title="自由建造" data-detail="从圆塔、城墙到东方楼阁和菠萝小屋，把脑海里的海岛地标一件件放上沙洲。">
             <div class="feature-art feature-build">
               <div class="feature-illustration build-illustration" role="img" aria-label="精致的沙堡与小岛插画">
                 <span class="build-island"></span>
@@ -72,7 +74,7 @@
               <span>从圆塔、城墙到东方楼阁和菠萝小屋，把脑海里的海岛地标一件件放上沙洲。</span>
             </div>
           </article>
-          <article class="feature-card" role="button" tabindex="0" aria-pressed="false" data-title="潮汐来去" data-detail="看海水缓缓上涨、退去，护城河开始蓄水，沙堡也会留下真实的受潮痕迹。">
+          <article class="feature-card reveal-on-scroll" style="--reveal-delay: 70ms" role="button" tabindex="0" aria-pressed="false" data-title="潮汐来去" data-detail="看海水缓缓上涨、退去，护城河开始蓄水，沙堡也会留下真实的受潮痕迹。">
             <div class="feature-art feature-tide">
               <div class="feature-illustration tide-illustration" role="img" aria-label="潮水层层覆盖沙洲的插画">
                 <span class="tide-island"></span>
@@ -90,7 +92,7 @@
               <span>看海水缓缓上涨、退去，护城河开始蓄水，沙堡也会留下真实的受潮痕迹。</span>
             </div>
           </article>
-          <article class="feature-card" role="button" tabindex="0" aria-pressed="false" data-title="昼夜天气" data-detail="从晴朗午后到星光夜晚，云层、雨水和月光让每一局都有不同的海边气息。">
+          <article class="feature-card reveal-on-scroll" style="--reveal-delay: 140ms" role="button" tabindex="0" aria-pressed="false" data-title="昼夜天气" data-detail="从晴朗午后到星光夜晚，云层、雨水和月光让每一局都有不同的海边气息。">
             <div class="feature-art feature-night">
               <div class="feature-illustration night-illustration" role="img" aria-label="月光下的中式亭阁与沙洲插画">
                 <span class="night-moon"></span>
@@ -111,7 +113,7 @@
           </article>
         </div>
 
-        <div class="feature-selection" aria-live="polite">
+        <div class="feature-selection reveal-on-scroll" aria-live="polite">
           <div>
             <small>SELECTED EXPERIENCE</small>
             <strong id="selected-feature-title">自由建造</strong>
@@ -120,26 +122,52 @@
         </div>
       </section>
 
-      <section class="how-section" id="how" aria-labelledby="how-title">
-        <div>
+      <section class="how-section page-panel is-after" id="how" data-page="2" aria-labelledby="how-title" aria-hidden="true">
+        <div class="reveal-on-scroll">
           <p class="eyebrow light"><span></span> 三步开始</p>
-          <h2 id="how-title">不用教程，<br />跟着直觉玩。</h2>
+          <h2 class="how-title-art" id="how-title">
+            <span class="art-kicker">不用教程，</span>
+            <span class="art-main">跟着直觉玩</span>
+          </h2>
         </div>
-        <ol class="steps">
-          <li><span>01</span><p>挑选一个喜欢的模具</p></li>
-          <li><span>02</span><p>点击沙滩放下第一座建筑</p></li>
-          <li><span>03</span><p>在涨潮前完成你的海岛作品</p></li>
+        <ol class="steps reveal-on-scroll">
+          <li><span>01</span><div><p>挑选一个喜欢的模具</p><small>圆塔、城墙、楼阁与海岛小屋</small></div></li>
+          <li><span>02</span><div><p>点击沙滩放下第一座建筑</p><small>沿着海岸自由排列，慢慢塑造轮廓</small></div></li>
+          <li><span>03</span><div><p>在涨潮前完成你的海岛作品</p><small>看潮水、夕阳与星光走过沙洲</small></div></li>
         </ol>
-        <a class="primary-button light-button" href="/game/" target="_blank" rel="noreferrer">现在开始建造 <span aria-hidden="true">↗</span></a>
+        <aside class="play-preview reveal-on-scroll" aria-label="沙洲潮汐观测窗">
+          <div class="preview-copy">
+            <p><i></i> TIDE WINDOW</p>
+            <strong>潮水正在靠近沙洲</strong>
+            <span>建造不会停下，海岸会持续改变。</span>
+          </div>
+          <div class="preview-scene" aria-hidden="true">
+            <span class="preview-sun"></span>
+            <span class="preview-island"></span>
+            <span class="preview-castle"></span>
+            <span class="preview-wave wave-back"></span>
+            <span class="preview-wave wave-front"></span>
+            <span class="preview-scale"><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="preview-meta"><span>LEVEL <strong>62%</strong></span><span>LIGHT <strong>SUNSET</strong></span><span>MODE <strong>FREE</strong></span></div>
+        </aside>
+        <a class="primary-button light-button reveal-on-scroll" href="/game/" target="_blank" rel="noreferrer">现在开始建造 <span aria-hidden="true">↗</span></a>
+
+        <footer>
+          <a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>梦幻沙洲</span></a>
+          <div class="footer-author">
+            <p>Author：Mingming Guo</p>
+            <a href="mailto:mingmingguo0313@gmail.com">mingmingguo0313@gmail.com</a>
+          </div>
+        </footer>
       </section>
 
-      <footer>
-        <a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>梦幻沙洲</span></a>
-        <div class="footer-author">
-          <p>Author：Mingming Guo</p>
-          <a href="mailto:mingmingguo0313@gmail.com">mingmingguo0313@gmail.com</a>
-        </div>
-      </footer>
+      <nav class="page-nav" aria-label="页面切换">
+        <button class="is-active" type="button" data-page-target="0" aria-label="前往首页" aria-current="page"><span>01</span><i></i></button>
+        <button type="button" data-page-target="1" aria-label="前往世界特色"><span>02</span><i></i></button>
+        <button type="button" data-page-target="2" aria-label="前往玩法说明"><span>03</span><i></i></button>
+      </nav>
+      <div class="page-transition" aria-hidden="true"></div>
     </main>
     <script type="module" src="/src/landing.js"></script>
   </body>
