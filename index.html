@@ -31,7 +31,7 @@
         <div class="hero-grid">
           <div class="hero-copy hero-reveal">
             <p class="eyebrow"><span></span> TROPICAL SANDBAR · 3D BUILDING GAME</p>
-            <h1 id="hero-title">梦幻<em>沙洲</em></h1>
+            <h1 id="hero-title" data-shiny-text="梦幻沙洲">梦幻<em>沙洲</em></h1>
             <p class="hero-tagline">在潮汐与星光之间，<br />建造你的沙滩城堡。</p>
             <p class="lead">堆起城墙、挖开护城河，在海风、夕阳与昼夜流转中，慢慢完成属于你的梦幻海岛。</p>
             <div class="hero-actions">
@@ -154,18 +154,41 @@
         <a class="primary-button light-button reveal-on-scroll" href="/game/" target="_blank" rel="noreferrer">现在开始建造 <span aria-hidden="true">↗</span></a>
 
         <footer>
-          <a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>梦幻沙洲</span></a>
-          <div class="footer-author">
-            <p>Author：Mingming Guo</p>
-            <a href="mailto:mingmingguo0313@gmail.com">mingmingguo0313@gmail.com</a>
+          <div class="logo-loop" role="region" aria-label="创作工具与技术品牌">
+            <div class="logo-loop-track">
+              <div class="logo-loop-set">
+                <span class="logo-loop-item" role="img" aria-label="TikTok"><span class="logo-loop-mark" style="--logo: url('/brand-logos/tiktok.svg')"></span><span>TikTok</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Codex"><span class="logo-loop-mark" style="--logo: url('/brand-logos/codex.svg')"></span><span>Codex</span></span>
+                <span class="logo-loop-item" role="img" aria-label="DeepSeek"><span class="logo-loop-mark" style="--logo: url('/brand-logos/deepseek.svg')"></span><span>DeepSeek</span></span>
+                <span class="logo-loop-item" role="img" aria-label="智谱 AI"><span class="logo-loop-glyph">Z</span><span>智谱 AI</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Claude"><span class="logo-loop-mark" style="--logo: url('/brand-logos/claude.svg')"></span><span>Claude</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Gemini"><span class="logo-loop-mark" style="--logo: url('/brand-logos/gemini.svg')"></span><span>Gemini</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Qwen"><span class="logo-loop-mark" style="--logo: url('/brand-logos/qwen.svg')"></span><span>Qwen</span></span>
+                <span class="logo-loop-item" role="img" aria-label="GitHub Copilot"><span class="logo-loop-mark" style="--logo: url('/brand-logos/copilot.svg')"></span><span>Copilot</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Perplexity"><span class="logo-loop-mark" style="--logo: url('/brand-logos/perplexity.svg')"></span><span>Perplexity</span></span>
+                <span class="logo-loop-item" role="img" aria-label="Hugging Face"><span class="logo-loop-mark" style="--logo: url('/brand-logos/huggingface.svg')"></span><span>Hugging Face</span></span>
+              </div>
+              <div class="logo-loop-set" aria-hidden="true">
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/tiktok.svg')"></span><span>TikTok</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/codex.svg')"></span><span>Codex</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/deepseek.svg')"></span><span>DeepSeek</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-glyph">Z</span><span>智谱 AI</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/claude.svg')"></span><span>Claude</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/gemini.svg')"></span><span>Gemini</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/qwen.svg')"></span><span>Qwen</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/copilot.svg')"></span><span>Copilot</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/perplexity.svg')"></span><span>Perplexity</span></span>
+                <span class="logo-loop-item"><span class="logo-loop-mark" style="--logo: url('/brand-logos/huggingface.svg')"></span><span>Hugging Face</span></span>
+              </div>
+            </div>
           </div>
         </footer>
       </section>
 
       <nav class="page-nav" aria-label="页面切换">
-        <button class="is-active" type="button" data-page-target="0" aria-label="前往首页" aria-current="page"><span>01</span><i></i></button>
-        <button type="button" data-page-target="1" aria-label="前往世界特色"><span>02</span><i></i></button>
-        <button type="button" data-page-target="2" aria-label="前往玩法说明"><span>03</span><i></i></button>
+        <button class="is-active" type="button" data-page-target="0" aria-label="前往首页" aria-current="page"><i aria-hidden="true"></i><span class="page-nav-label"><b>01</b></span></button>
+        <button type="button" data-page-target="1" aria-label="前往世界特色"><i aria-hidden="true"></i><span class="page-nav-label"><b>02</b></span></button>
+        <button type="button" data-page-target="2" aria-label="前往玩法说明"><i aria-hidden="true"></i><span class="page-nav-label"><b>03</b></span></button>
       </nav>
       <div class="page-transition" aria-hidden="true"></div>
     </main>

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:stable": "vite --host 127.0.0.1 --port 5175 --strictPort",
-    "build": "vite build && node scripts/prepare-sites-output.mjs",
+    "check": "node --check src/main.js && node --check src/landing.js && node --check src/splashCursor.js && node --check scripts/prepare-sites-output.mjs && node --check scripts/clean-dist.mjs",
+    "build": "node scripts/clean-dist.mjs && vite build && node scripts/prepare-sites-output.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

@@ -1,4 +1,5 @@
 import "./landing.css";
+import { createSplashCursor } from "./splashCursor.js";
 
 const featureCards = [...document.querySelectorAll(".feature-card")];
 const selectedFeatureTitle = document.querySelector("#selected-feature-title");
@@ -7,8 +8,15 @@ const revealItems = [...document.querySelectorAll(".reveal-on-scroll")];
 const hero = document.querySelector(".hero");
 const pageStage = document.querySelector(".page-stage");
 const pagePanels = [...document.querySelectorAll(".page-panel")];
+const pageNav = document.querySelector(".page-nav");
 const pageNavButtons = [...document.querySelectorAll("[data-page-target]")];
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const destroySplashCursor = reducedMotion.matches
+  ? () => {}
+  : createSplashCursor({ COLOR: "#EAB308", RAINBOW_MODE: false });
+
+if (import.meta.hot) import.meta.hot.dispose(destroySplashCursor);
+
 let activePage = 0;
 let transitionLocked = false;
 
@@ -111,6 +119,36 @@ function showPage(nextPage) {
     transitionLocked = false;
     pageStage.classList.remove("is-switching");
   }, reducedMotion.matches ? 50 : 780);
+}
+
+if (pageNav && !reducedMotion.matches) {
+  let navFrameId = 0;
+
+  pageNav.addEventListener("pointermove", (event) => {
+    if (navFrameId) return;
+    const pointerX = event.clientX;
+
+    navFrameId = requestAnimationFrame(() => {
+      pageNavButtons.forEach((button) => {
+        const bounds = button.getBoundingClientRect();
+        const distance = Math.abs(pointerX - (bounds.left + bounds.width / 2));
+        const proximity = Math.max(0, 1 - distance / 92);
+        const smoothProximity = proximity * proximity * (3 - 2 * proximity);
+        button.style.setProperty("--nav-proximity", smoothProximity.toFixed(3));
+        button.style.setProperty("--nav-shift-y", `${(smoothProximity * 5).toFixed(2)}px`);
+      });
+      navFrameId = 0;
+    });
+  });
+
+  pageNav.addEventListener("pointerleave", () => {
+    if (navFrameId) cancelAnimationFrame(navFrameId);
+    navFrameId = 0;
+    pageNavButtons.forEach((button) => {
+      button.style.removeProperty("--nav-proximity");
+      button.style.removeProperty("--nav-shift-y");
+    });
+  });
 }
 
 pageNavButtons.forEach((button) => {
