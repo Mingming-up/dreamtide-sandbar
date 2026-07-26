@@ -719,22 +719,64 @@ h1 {
 
 .save-heading {
   position: relative;
-  padding-right: 96px;
+  padding-right: 120px;
 }
 
 .save-symbol {
   background: linear-gradient(135deg, #816be3, #5c4db3);
 }
 
-.autosave-state {
+.autosave-control {
   position: absolute;
   top: 1px;
   right: 0;
-  max-width: 92px;
-  overflow: hidden;
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.autosave-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid rgba(92, 77, 179, 0.16);
+  border-radius: 999px;
   color: #6a6594;
+  background: rgba(255, 255, 255, 0.38);
+  cursor: pointer;
+  font: inherit;
   font-size: 9px;
   font-weight: 800;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.autosave-toggle-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a7afb0;
+  box-shadow: 0 0 0 3px rgba(126, 136, 138, 0.1);
+}
+
+.autosave-toggle.is-enabled {
+  border-color: rgba(83, 151, 126, 0.3);
+  color: #39785f;
+  background: rgba(219, 245, 232, 0.62);
+}
+
+.autosave-toggle.is-enabled .autosave-toggle-dot {
+  background: #55a67e;
+  box-shadow: 0 0 0 3px rgba(85, 166, 126, 0.14);
+}
+
+.autosave-state {
+  max-width: 112px;
+  overflow: hidden;
+  color: #718184;
+  font-size: 8px;
+  font-weight: 700;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -748,7 +790,7 @@ h1 {
 
 .save-slot {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   overflow: hidden;
   border: 1px solid rgba(63, 92, 116, 0.1);
   border-radius: 13px;
@@ -764,6 +806,7 @@ h1 {
 
 .save-slot-load,
 .save-slot-write,
+.save-slot-delete,
 .save-file-actions button {
   border: 0;
   color: #3d5d65;
@@ -818,8 +861,24 @@ h1 {
   font-weight: 900;
 }
 
+.save-slot-delete {
+  display: none;
+  align-self: stretch;
+  min-width: 52px;
+  border-left: 1px solid rgba(163, 76, 72, 0.12);
+  color: #a34c48;
+  background: rgba(189, 91, 83, 0.06);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.save-slot.has-save .save-slot-delete {
+  display: block;
+}
+
 .save-slot-load:hover,
 .save-slot-write:hover,
+.save-slot-delete:hover,
 .save-file-actions button:hover {
   background: rgba(255, 255, 255, 0.46);
 }
@@ -989,18 +1048,38 @@ h1 {
 }
 
 .glass-icon-back {
+  border: 1px solid rgba(255, 255, 255, 0.22);
   background: var(--glass-gradient);
-  box-shadow: 7px -7px 12px rgba(14, 34, 40, 0.18);
-  transform: rotate(15deg);
+  box-shadow:
+    8px -8px 18px rgba(14, 34, 40, 0.2),
+    0 12px 28px var(--glass-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -8px 18px rgba(8, 38, 52, 0.16);
+  filter: saturate(1.12);
+  transform: rotate(13deg);
 }
 
 .glass-icon-front {
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  background: rgba(255, 255, 255, 0.2);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.09) 52%, rgba(255, 255, 255, 0.04));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 18px rgba(14, 34, 40, 0.12);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
   transform-origin: 80% 50%;
+}
+
+.glass-icon-front::before {
+  position: absolute;
+  inset: -35% 40% 36% -28%;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+  filter: blur(2px);
+  content: "";
+  pointer-events: none;
 }
 
 .glass-icon-glyph {
@@ -1009,8 +1088,8 @@ h1 {
   height: 24px;
   margin: auto;
   place-items: center;
-  color: #fff;
-  filter: drop-shadow(0 2px 4px rgba(16, 42, 48, 0.24));
+  color: #fff9e9;
+  filter: drop-shadow(0 2px 5px rgba(16, 42, 48, 0.32));
 }
 
 .glass-icon-glyph svg {
@@ -1071,7 +1150,7 @@ h1 {
 .hint-panel {
   position: fixed;
   z-index: 110;
-  top: 96px;
+  top: 72px;
   right: auto;
   bottom: auto;
   left: 24px;
@@ -1248,7 +1327,7 @@ h1 {
   .status-panel,
   .tool-panel,
   .hint-panel {
-    top: 78px;
+    top: 54px;
     left: 14px;
     width: min(860px, calc(100vw - 28px));
   }
@@ -1291,7 +1370,7 @@ h1 {
   }
 
   .bubble-menu-items {
-    top: 54px;
+    top: 48px;
     left: 10px;
     width: 118px;
   }
@@ -1311,7 +1390,7 @@ h1 {
   .status-panel,
   .tool-panel,
   .hint-panel {
-    top: 72px;
+    top: 54px;
     left: 10px;
     width: calc(100vw - 20px);
     border-radius: 16px;

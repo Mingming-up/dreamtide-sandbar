@@ -1,24 +1,113 @@
 import "./landing.css";
 import { createSplashCursor } from "./splashCursor.js";
+import { createClickSpark } from "./clickSpark.js";
 
 const featureCards = [...document.querySelectorAll(".feature-card")];
 const selectedFeatureTitle = document.querySelector("#selected-feature-title");
 const selectedFeatureDetail = document.querySelector("#selected-feature-detail");
 const revealItems = [...document.querySelectorAll(".reveal-on-scroll")];
+const splitTextLines = [...document.querySelectorAll(".split-text-title > span")];
+const variableProximityTitles = [...document.querySelectorAll(".variable-proximity-title")];
+const specularButtons = [...document.querySelectorAll(".specular-button")];
+const borderGlowTargets = [...document.querySelectorAll(".border-glow-target")];
 const hero = document.querySelector(".hero");
 const pageStage = document.querySelector(".page-stage");
 const pagePanels = [...document.querySelectorAll(".page-panel")];
 const pageNav = document.querySelector(".page-nav");
 const pageNavButtons = [...document.querySelectorAll("[data-page-target]")];
+const trailerDialog = document.querySelector(".trailer-dialog");
+const trailerTrigger = document.querySelector(".trailer-trigger");
+const trailerClose = document.querySelector(".trailer-close");
+const trailerVideo = trailerDialog?.querySelector("video");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const destroySplashCursor = reducedMotion.matches
   ? () => {}
   : createSplashCursor({ COLOR: "#EAB308", RAINBOW_MODE: false });
+const destroyClickSpark = reducedMotion.matches
+  ? () => {}
+  : createClickSpark({ color: "#f6d99e" });
 
-if (import.meta.hot) import.meta.hot.dispose(destroySplashCursor);
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    destroySplashCursor();
+    destroyClickSpark();
+  });
+}
 
 let activePage = 0;
 let transitionLocked = false;
+
+let splitTextIndex = 0;
+splitTextLines.forEach((line) => {
+  const characters = [...line.textContent];
+  line.setAttribute("aria-hidden", "true");
+  line.replaceChildren(
+    ...characters.map((character) => {
+      const span = document.createElement("span");
+      span.className = "split-text-char";
+      span.style.setProperty("--split-index", splitTextIndex++);
+      span.textContent = character;
+      return span;
+    }),
+  );
+});
+
+if (!reducedMotion.matches) {
+  variableProximityTitles.forEach((variableProximityTitle) => {
+    const proximityCharacters = [];
+    const textWalker = document.createTreeWalker(variableProximityTitle, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (textWalker.nextNode()) textNodes.push(textWalker.currentNode);
+
+    textNodes.forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      [...node.textContent].forEach((character) => {
+        const span = document.createElement("span");
+        span.className = "proximity-char";
+        span.setAttribute("aria-hidden", "true");
+        span.textContent = character;
+        proximityCharacters.push(span);
+        fragment.append(span);
+      });
+      node.replaceWith(fragment);
+    });
+
+    let proximityFrameId = 0;
+    let proximityCenters = [];
+    variableProximityTitle.addEventListener("pointerenter", () => {
+      proximityCenters = proximityCharacters.map((character) => {
+        const bounds = character.getBoundingClientRect();
+        return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+      });
+    });
+
+    variableProximityTitle.addEventListener("pointermove", (event) => {
+      if (proximityFrameId) return;
+      const pointerX = event.clientX;
+      const pointerY = event.clientY;
+
+      proximityFrameId = requestAnimationFrame(() => {
+        proximityCharacters.forEach((character, index) => {
+          const center = proximityCenters[index];
+          if (!center) return;
+          const distance = Math.hypot(pointerX - center.x, pointerY - center.y);
+          const proximity = Math.max(0, 1 - distance / 150);
+          const easedProximity = proximity * proximity * (3 - 2 * proximity);
+          character.style.setProperty("--proximity", easedProximity.toFixed(3));
+        });
+        proximityFrameId = 0;
+      });
+    });
+
+    variableProximityTitle.addEventListener("pointerleave", () => {
+      if (proximityFrameId) cancelAnimationFrame(proximityFrameId);
+      proximityFrameId = 0;
+      proximityCharacters.forEach((character) => {
+        character.style.setProperty("--proximity", "0");
+      });
+    });
+  });
+}
 
 function selectFeature(card) {
   featureCards.forEach((item) => {
@@ -50,6 +139,50 @@ featureCards.forEach((card) => {
     card.style.removeProperty("--pointer-y");
   });
 });
+
+if (!reducedMotion.matches) {
+  specularButtons.forEach((button) => {
+    button.addEventListener("pointermove", (event) => {
+      const bounds = button.getBoundingClientRect();
+      button.style.setProperty("--specular-x", `${event.clientX - bounds.left}px`);
+      button.style.setProperty("--specular-y", `${event.clientY - bounds.top}px`);
+    });
+
+    button.addEventListener("pointerleave", () => {
+      button.style.removeProperty("--specular-x");
+      button.style.removeProperty("--specular-y");
+    });
+  });
+
+  borderGlowTargets.forEach((target) => {
+    let glowFrameId = 0;
+    target.addEventListener("pointermove", (event) => {
+      if (glowFrameId) return;
+      const pointerX = event.clientX;
+      const pointerY = event.clientY;
+
+      glowFrameId = requestAnimationFrame(() => {
+        const bounds = target.getBoundingClientRect();
+        const localX = pointerX - bounds.left;
+        const localY = pointerY - bounds.top;
+        const edgeDistance = Math.min(localX, bounds.width - localX, localY, bounds.height - localY);
+        const edgeStrength = Math.max(0, 1 - edgeDistance / 140);
+        target.style.setProperty("--border-glow-x", `${localX}px`);
+        target.style.setProperty("--border-glow-y", `${localY}px`);
+        target.style.setProperty("--border-glow-opacity", (0.5 + edgeStrength * 0.5).toFixed(3));
+        glowFrameId = 0;
+      });
+    });
+
+    target.addEventListener("pointerleave", () => {
+      if (glowFrameId) cancelAnimationFrame(glowFrameId);
+      glowFrameId = 0;
+      target.style.removeProperty("--border-glow-x");
+      target.style.removeProperty("--border-glow-y");
+      target.style.removeProperty("--border-glow-opacity");
+    });
+  });
+}
 
 if ("IntersectionObserver" in window) {
   const revealObserver = new IntersectionObserver(
@@ -103,6 +236,12 @@ function showPage(nextPage) {
     panel.inert = !active;
     if (active) {
       panel.querySelectorAll(".reveal-on-scroll").forEach((item) => item.classList.add("is-visible"));
+      const splitTextTitle = panel.querySelector(".split-text-title");
+      if (splitTextTitle && !reducedMotion.matches) {
+        splitTextTitle.classList.remove("is-split-playing");
+        void splitTextTitle.offsetWidth;
+        splitTextTitle.classList.add("is-split-playing");
+      }
     }
   });
 
@@ -155,6 +294,22 @@ pageNavButtons.forEach((button) => {
   button.addEventListener("click", () => showPage(Number(button.dataset.pageTarget)));
 });
 
+trailerTrigger?.addEventListener("click", () => {
+  trailerDialog.showModal();
+  trailerVideo.currentTime = 0;
+  trailerVideo.play().catch(() => {});
+});
+
+trailerClose?.addEventListener("click", () => trailerDialog.close());
+trailerDialog?.addEventListener("click", (event) => {
+  if (event.target === trailerDialog) trailerDialog.close();
+});
+trailerDialog?.addEventListener("close", () => {
+  trailerVideo.pause();
+  trailerVideo.currentTime = 0;
+  trailerTrigger?.focus();
+});
+
 document.querySelectorAll('a[href^="#"]').forEach((link) => {
   link.addEventListener("click", (event) => {
     const targetIndex = pagePanels.findIndex((panel) => `#${panel.id}` === link.getAttribute("href"));
@@ -167,6 +322,7 @@ document.querySelectorAll('a[href^="#"]').forEach((link) => {
 window.addEventListener(
   "wheel",
   (event) => {
+    if (trailerDialog?.open) return;
     if (Math.abs(event.deltaY) < 18) return;
     event.preventDefault();
     showPage(activePage + (event.deltaY > 0 ? 1 : -1));
@@ -175,6 +331,7 @@ window.addEventListener(
 );
 
 window.addEventListener("keydown", (event) => {
+  if (trailerDialog?.open) return;
   if (["ArrowDown", "PageDown"].includes(event.key)) {
     event.preventDefault();
     showPage(activePage + 1);

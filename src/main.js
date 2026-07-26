@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import kfcPrimaryLogoUrl from "./assets/kfc-primary-logo.png";
 import "./styles.css";
@@ -39,6 +40,7 @@ const state = {
   tideSpeed: 0.016,
   lastTideSpeed: 0.016,
   dayTime: 0.28,
+  lunarPhase: 0.34,
   timePaused: false,
   weather: "sunny",
   weatherTimer: 28,
@@ -63,6 +65,9 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
+const carPmremGenerator = new THREE.PMREMGenerator(renderer);
+const carEnvironmentMap = carPmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+carPmremGenerator.dispose();
 ui.shell.appendChild(renderer.domElement);
 renderer.domElement.className = "game-canvas";
 
@@ -203,6 +208,7 @@ const frameColors = {
   skyTop: new THREE.Color(),
   skyHorizon: new THREE.Color(),
   skyMid: new THREE.Color(),
+  skyAtmosphere: new THREE.Color(),
   cloudTint: new THREE.Color(),
   terrain: new THREE.Color(),
 };
@@ -248,6 +254,13 @@ const roots = {
 scene.add(roots.builds, roots.decorations, roots.particles, roots.scenery);
 
 const marineLife = [];
+const largeMarineLife = [];
+const largeMarineEvent = {
+  active: null,
+  startedAt: 0,
+  duration: 0,
+  nextAt: 12,
+};
 addScenery();
 
 const ghost = createGhost();
@@ -293,9 +306,11 @@ const editState = {
 const SAVE_VERSION = 1;
 const SAVE_KEY_PREFIX = "dream-sandbar-save-v1-slot-";
 const SAVE_ACTIVE_SLOT_KEY = "dream-sandbar-active-save-slot";
+const SAVE_AUTOSAVE_KEY = "dream-sandbar-autosave-enabled";
 const saveSystem = {
   activeSlot: 1,
   autosaveTimer: 0,
+  autosaveEnabled: false,
   dirty: false,
   restoring: false,
   restoredOnStart: false,
@@ -309,6 +324,8 @@ let floodProtectionElapsed = 1;
 let nextSkyTextureUpdate = 0;
 let waterUpdateElapsed = 1 / 30;
 let waterNormalElapsed = 1 / 15;
+let terrainUpdateDepth = 0;
+let terrainNeedsNormalUpdate = false;
 const moatDrag = {
   active: false,
   pointerId: null,
@@ -416,6 +433,10 @@ ui.saveSlotLoadButtons.forEach((button) => {
 ui.saveSlotWriteButtons.forEach((button) => {
   button.addEventListener("click", () => saveToSlot(Number(button.dataset.writeSlot), true));
 });
+ui.saveSlotDeleteButtons.forEach((button) => {
+  button.addEventListener("click", () => deleteSaveSlot(Number(button.dataset.deleteSlot)));
+});
+ui.autosaveToggle.addEventListener("click", toggleAutoSave);
 ui.exportSaveButton.addEventListener("click", exportActiveSave);
 ui.importSaveButton.addEventListener("click", () => ui.saveFileInput.click());
 ui.saveFileInput.addEventListener("change", importSaveFile);
@@ -423,8 +444,18 @@ ui.clearSaveButton.addEventListener("click", () => {
   clearBuilds(true, true);
   scheduleAutoSave(0);
 });
-window.addEventListener("beforeunload", () => saveToSlot(saveSystem.activeSlot, false));
-window.setInterval(() => saveToSlot(saveSystem.activeSlot, false), 15000);
+window.addEventListener("beforeunload", (event) => {
+  if (!saveSystem.dirty) return;
+  if (saveSystem.autosaveEnabled) {
+    saveToSlot(saveSystem.activeSlot, false);
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = "";
+});
+window.setInterval(() => {
+  if (saveSystem.autosaveEnabled && saveSystem.dirty) saveToSlot(saveSystem.activeSlot, false);
+}, 15000);
 
 updateUi();
 animate();
@@ -449,22 +480,22 @@ function createUi() {
   bubbleItems.innerHTML = `
     <ul class="glass-icon-grid" role="menu" aria-label="界面面板">
       <li role="none">
-        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="title" aria-label="标题" style="--item-index: 0; --glass-gradient: linear-gradient(160deg, #22b8b3, #167e91);">
+        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="title" aria-label="标题" style="--item-index: 0; --glass-gradient: linear-gradient(145deg, #35d2bc 0%, #0e91a0 56%, #075d72 100%); --glass-glow: rgba(20, 174, 170, .34);">
           <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"/></svg></span></span><span class="glass-icon-label">标题</span>
         </button>
       </li>
       <li role="none">
-        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="status" aria-label="状态" style="--item-index: 1; --glass-gradient: linear-gradient(160deg, #5b8ff9, #315dd8);">
+        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="status" aria-label="状态" style="--item-index: 1; --glass-gradient: linear-gradient(145deg, #78b2ff 0%, #586fe9 56%, #3548ad 100%); --glass-glow: rgba(75, 105, 230, .32);">
           <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 16l4-5 4 3 7-8M16 6h3v3"/></svg></span></span><span class="glass-icon-label">状态</span>
         </button>
       </li>
       <li role="none">
-        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="tools" aria-label="工具" style="--item-index: 2; --glass-gradient: linear-gradient(160deg, #f4a15d, #df624b);">
+        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="tools" aria-label="工具" style="--item-index: 2; --glass-gradient: linear-gradient(145deg, #ffbd70 0%, #ef7959 56%, #b94a54 100%); --glass-glow: rgba(226, 103, 75, .32);">
           <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 5l5 5-3 3-5-5zM4 20l7.5-7.5M5 16l3 3-4 1z"/></svg></span></span><span class="glass-icon-label">工具</span>
         </button>
       </li>
       <li role="none">
-        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="saves" aria-label="存档" style="--item-index: 3; --glass-gradient: linear-gradient(160deg, #9b78ee, #6849c8);">
+        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="saves" aria-label="存档" style="--item-index: 3; --glass-gradient: linear-gradient(145deg, #c793ff 0%, #8c5de8 56%, #5b3db2 100%); --glass-glow: rgba(126, 80, 218, .32);">
           <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5zM8 4v6h8V4M8 17h8M9 7h5"/></svg></span></span><span class="glass-icon-label">存档</span>
         </button>
       </li>
@@ -568,7 +599,13 @@ function createUi() {
     <div class="hint-heading save-heading">
       <span class="hint-symbol save-symbol" aria-hidden="true">◈</span>
       <div><p class="eyebrow">Island archive</p><strong>沙洲存档</strong></div>
-      <span class="autosave-state" data-autosave-state>自动保存已开启</span>
+      <div class="autosave-control">
+        <button class="autosave-toggle" type="button" data-autosave-toggle aria-pressed="false">
+          <span class="autosave-toggle-dot" aria-hidden="true"></span>
+          <span data-autosave-label>自动存档：关</span>
+        </button>
+        <small class="autosave-state" data-autosave-state>仅手动保存</small>
+      </div>
     </div>
     <div class="save-slot-list">
       ${[1, 2, 3].map((slot) => `
@@ -578,6 +615,7 @@ function createUi() {
             <span class="save-slot-copy"><strong>存档 ${slot}</strong><small data-slot-meta="${slot}">空存档位</small></span>
           </button>
           <button class="save-slot-write" type="button" data-write-slot="${slot}">保存</button>
+          <button class="save-slot-delete" type="button" data-delete-slot="${slot}" aria-label="删除存档 ${slot}">删除</button>
         </article>
       `).join("")}
     </div>
@@ -587,7 +625,7 @@ function createUi() {
       <button type="button" class="save-danger" data-save-action="clear">清空当前沙洲</button>
     </div>
     <input class="save-file-input" type="file" accept="application/json,.json" data-save-file hidden>
-    <p class="hint-note save-note">编辑后会自动写入当前存档位，导出文件可用于备份或迁移。</p>
+    <p class="hint-note save-note">开启自动存档后，编辑会写入当前存档位；关闭时请手动保存。</p>
   `;
 
   const titlePanel = hud.querySelector(".title-panel");
@@ -681,7 +719,10 @@ function createUi() {
     saveSlotCards: [...saves.querySelectorAll("[data-save-slot]")],
     saveSlotLoadButtons: [...saves.querySelectorAll("[data-load-slot]")],
     saveSlotWriteButtons: [...saves.querySelectorAll("[data-write-slot]")],
+    saveSlotDeleteButtons: [...saves.querySelectorAll("[data-delete-slot]")],
     saveSlotMeta: [...saves.querySelectorAll("[data-slot-meta]")],
+    autosaveToggle: saves.querySelector("[data-autosave-toggle]"),
+    autosaveLabel: saves.querySelector("[data-autosave-label]"),
     autosaveState: saves.querySelector("[data-autosave-state]"),
     exportSaveButton: saves.querySelector('[data-save-action="export"]'),
     importSaveButton: saves.querySelector('[data-save-action="import"]'),
@@ -876,9 +917,6 @@ function restoreTerrainHeights(heights) {
   requestTerrainGeometryUpdate();
 }
 
-let terrainUpdateDepth = 0;
-let terrainNeedsNormalUpdate = false;
-
 function deferTerrainUpdates(callback) {
   terrainUpdateDepth += 1;
   try {
@@ -914,6 +952,8 @@ function updateUndoButton() {
 function initializeSaveSystem() {
   const storedSlot = Number(readStorageValue(SAVE_ACTIVE_SLOT_KEY));
   saveSystem.activeSlot = Number.isInteger(storedSlot) && storedSlot >= 1 && storedSlot <= 3 ? storedSlot : 1;
+  saveSystem.autosaveEnabled = readStorageValue(SAVE_AUTOSAVE_KEY) === "true";
+  updateAutosaveControl();
   refreshSavePanel();
   const save = readSaveSlot(saveSystem.activeSlot);
   if (!save) return;
@@ -977,6 +1017,7 @@ function serializeCurrentIsland() {
       tideSpeed: roundSaveNumber(state.tideSpeed),
       lastTideSpeed: roundSaveNumber(state.lastTideSpeed),
       dayTime: roundSaveNumber(state.dayTime),
+      lunarPhase: roundSaveNumber(state.lunarPhase),
       timePaused: state.timePaused,
       weather: state.weather,
       weatherTimer: roundSaveNumber(state.weatherTimer),
@@ -1019,8 +1060,12 @@ function saveToSlot(slot, showMessage = false) {
 function scheduleAutoSave(delay = 900) {
   if (saveSystem.restoring) return;
   saveSystem.dirty = true;
-  ui.autosaveState.textContent = "等待自动保存…";
   clearTimeout(saveSystem.autosaveTimer);
+  if (!saveSystem.autosaveEnabled) {
+    ui.autosaveState.textContent = "有未保存修改";
+    return;
+  }
+  ui.autosaveState.textContent = "等待自动保存…";
   if (delay <= 0) {
     saveToSlot(saveSystem.activeSlot, false);
     return;
@@ -1030,9 +1075,35 @@ function scheduleAutoSave(delay = 900) {
   }, delay);
 }
 
+function toggleAutoSave() {
+  saveSystem.autosaveEnabled = !saveSystem.autosaveEnabled;
+  try {
+    window.localStorage.setItem(SAVE_AUTOSAVE_KEY, String(saveSystem.autosaveEnabled));
+  } catch (error) {
+    console.warn("无法记录自动存档设置：", error);
+  }
+  clearTimeout(saveSystem.autosaveTimer);
+  updateAutosaveControl();
+  if (saveSystem.autosaveEnabled && saveSystem.dirty) scheduleAutoSave(0);
+  else if (saveSystem.autosaveEnabled) ui.autosaveState.textContent = "已开启";
+  else ui.autosaveState.textContent = saveSystem.dirty ? "有未保存修改" : "仅手动保存";
+  showToast(saveSystem.autosaveEnabled ? "自动存档已开启。" : "自动存档已关闭，离开前请手动保存。");
+}
+
+function updateAutosaveControl() {
+  ui.autosaveToggle.classList.toggle("is-enabled", saveSystem.autosaveEnabled);
+  ui.autosaveToggle.setAttribute("aria-pressed", String(saveSystem.autosaveEnabled));
+  ui.autosaveLabel.textContent = `自动存档：${saveSystem.autosaveEnabled ? "开" : "关"}`;
+  ui.autosaveState.textContent = saveSystem.autosaveEnabled ? "已开启" : "仅手动保存";
+}
+
 function loadSaveSlot(slot) {
   if (slot < 1 || slot > 3) return;
-  if (slot !== saveSystem.activeSlot) saveToSlot(saveSystem.activeSlot, false);
+  if (slot !== saveSystem.activeSlot && saveSystem.dirty) {
+    if (saveSystem.autosaveEnabled) saveToSlot(saveSystem.activeSlot, false);
+    else if (!window.confirm("当前进度还没有保存，仍要切换存档位吗？")) return;
+  }
+  clearTimeout(saveSystem.autosaveTimer);
   saveSystem.activeSlot = slot;
   try {
     window.localStorage.setItem(SAVE_ACTIVE_SLOT_KEY, String(slot));
@@ -1049,10 +1120,40 @@ function loadSaveSlot(slot) {
     clearBuilds(false, false);
     resetWorldForBlankSave();
     saveSystem.restoring = false;
-    saveToSlot(slot, false);
+    saveSystem.dirty = false;
+    ui.autosaveState.textContent = saveSystem.autosaveEnabled ? "已开启" : "仅手动保存";
     showToast(`已切换到空存档 ${slot}。`);
   }
   refreshSavePanel();
+}
+
+function deleteSaveSlot(slot) {
+  if (slot < 1 || slot > 3 || !readSaveSlot(slot)) return;
+  const deletingActiveSlot = slot === saveSystem.activeSlot;
+  const message = deletingActiveSlot
+    ? `删除存档 ${slot}？当前沙洲也会恢复为空白状态。`
+    : `删除存档 ${slot}？此操作无法撤销。`;
+  if (!window.confirm(message)) return;
+
+  clearTimeout(saveSystem.autosaveTimer);
+  try {
+    window.localStorage.removeItem(`${SAVE_KEY_PREFIX}${slot}`);
+  } catch (error) {
+    console.error("存档删除失败：", error);
+    showToast("无法删除该存档，请检查浏览器存储权限。");
+    return;
+  }
+
+  if (deletingActiveSlot) {
+    saveSystem.restoring = true;
+    clearBuilds(false, false);
+    resetWorldForBlankSave();
+    saveSystem.restoring = false;
+    saveSystem.dirty = false;
+    ui.autosaveState.textContent = `空存档 · 存档 ${slot}`;
+  }
+  refreshSavePanel();
+  showToast(`已删除存档 ${slot}。`);
 }
 
 function restoreIslandFromSave(save) {
@@ -1076,6 +1177,7 @@ function restoreIslandFromSave(save) {
     state.tideSpeed = Number.isFinite(world.tideSpeed) ? world.tideSpeed : 0.016;
     state.lastTideSpeed = Number.isFinite(world.lastTideSpeed) ? world.lastTideSpeed : 0.016;
     state.dayTime = THREE.MathUtils.euclideanModulo(Number(world.dayTime) || 0.28, 1);
+    state.lunarPhase = THREE.MathUtils.euclideanModulo(Number(world.lunarPhase) || 0.34, 1);
     state.timePaused = Boolean(world.timePaused);
     state.weather = ["sunny", "cloudy", "rainy"].includes(world.weather) ? world.weather : "sunny";
     state.weatherTimer = Number(world.weatherTimer) || 28;
@@ -1172,6 +1274,7 @@ function resetWorldForBlankSave() {
   state.tideSpeed = 0.016;
   state.lastTideSpeed = 0.016;
   state.dayTime = 0.28;
+  state.lunarPhase = 0.34;
   state.timePaused = false;
   state.weather = "sunny";
   state.weatherTimer = 28;
@@ -1298,6 +1401,7 @@ function createOcean() {
     clearcoat: 0.45,
     depthWrite: false,
   });
+  enableOceanHorizonFade(waterMaterial);
   const water = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200, 120, 120), waterMaterial);
   water.rotation.x = -Math.PI / 2;
   water.position.y = -0.42;
@@ -1320,8 +1424,10 @@ function createOcean() {
     new THREE.PointsMaterial({
       color: 0xf3feff,
       size: 0.055,
+      map: createSoftPointTexture(),
       transparent: true,
       opacity: 0.22,
+      alphaTest: 0.015,
       depthWrite: false,
     })
   );
@@ -1331,6 +1437,32 @@ function createOcean() {
   group.add(foamFlecks);
 
   return { group, water, foamFlecks };
+}
+
+function enableOceanHorizonFade(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying float vOceanDistanceFade;",
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        vec3 oceanWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vOceanDistanceFade = 1.0 - smoothstep(32.0, 84.0, distance(cameraPosition, oceanWorldPosition));`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying float vOceanDistanceFade;",
+      )
+      .replace(
+        "#include <color_fragment>",
+        "#include <color_fragment>\ndiffuseColor.a *= vOceanDistanceFade;",
+      );
+  };
+  material.customProgramCacheKey = () => "ocean-horizon-fade-v2";
 }
 
 function createCloudPuffTexture() {
@@ -1349,30 +1481,105 @@ function createCloudPuffTexture() {
   return texture;
 }
 
+function createSoftPointTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  const glow = context.createRadialGradient(32, 32, 1, 32, 32, 30);
+  glow.addColorStop(0, "rgba(255, 255, 255, 1)");
+  glow.addColorStop(0.22, "rgba(255, 255, 255, 0.9)");
+  glow.addColorStop(0.58, "rgba(255, 255, 255, 0.34)");
+  glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = glow;
+  context.fillRect(0, 0, 64, 64);
+  return createPointCanvasTexture(canvas);
+}
+
+function createTwinklePointTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 96;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  const glow = context.createRadialGradient(48, 48, 0, 48, 48, 42);
+  glow.addColorStop(0, "rgba(255, 255, 255, 1)");
+  glow.addColorStop(0.12, "rgba(255, 255, 255, 0.94)");
+  glow.addColorStop(0.34, "rgba(255, 255, 255, 0.28)");
+  glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = glow;
+  context.fillRect(0, 0, 96, 96);
+
+  context.fillStyle = "rgba(255, 255, 255, 0.58)";
+  context.beginPath();
+  context.moveTo(48, 4);
+  context.quadraticCurveTo(52, 38, 92, 48);
+  context.quadraticCurveTo(52, 52, 48, 92);
+  context.quadraticCurveTo(44, 52, 4, 48);
+  context.quadraticCurveTo(44, 44, 48, 4);
+  context.fill();
+  return createPointCanvasTexture(canvas);
+}
+
+function createRaindropPointTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  const drop = context.createLinearGradient(0, 0, 0, 96);
+  drop.addColorStop(0, "rgba(255, 255, 255, 0)");
+  drop.addColorStop(0.28, "rgba(255, 255, 255, 0.2)");
+  drop.addColorStop(0.72, "rgba(255, 255, 255, 0.86)");
+  drop.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = drop;
+  context.beginPath();
+  context.ellipse(16, 48, 4.4, 42, 0, 0, Math.PI * 2);
+  context.fill();
+  return createPointCanvasTexture(canvas);
+}
+
+function createPointCanvasTexture(canvas) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
 function createSkyGradientTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 4;
-  canvas.height = 256;
+  canvas.width = 256;
+  canvas.height = 512;
   const context = canvas.getContext("2d");
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   return { canvas, context, texture };
 }
 
-function updateSkyGradient(topColor, horizonColor) {
+function updateSkyGradient(topColor, horizonColor, fogColor, horizonGlow) {
+  const atmosphereColor = frameColors.skyAtmosphere.copy(fogColor);
+  const upperColor = frameColors.skyMid
+    .copy(topColor)
+    .lerp(horizonColor, horizonGlow * 0.055)
+    .lerp(atmosphereColor, 0.5);
   const gradient = skyGradient.context.createLinearGradient(0, 0, 0, skyGradient.canvas.height);
-  const midColor = frameColors.skyMid.copy(topColor).lerp(horizonColor, 0.36);
   gradient.addColorStop(0, `#${topColor.getHexString()}`);
-  gradient.addColorStop(0.58, `#${midColor.getHexString()}`);
-  gradient.addColorStop(1, `#${horizonColor.getHexString()}`);
+  gradient.addColorStop(0.3, `#${upperColor.getHexString()}`);
+  gradient.addColorStop(0.48, `#${atmosphereColor.getHexString()}`);
+  gradient.addColorStop(1, `#${atmosphereColor.getHexString()}`);
   skyGradient.context.fillStyle = gradient;
   skyGradient.context.fillRect(0, 0, skyGradient.canvas.width, skyGradient.canvas.height);
+
+  scene.fog.color.copy(atmosphereColor);
   skyGradient.texture.needsUpdate = true;
 }
 
-function createMoonTexture() {
+function createMoonPhaseTexture(initialPhase) {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 256;
@@ -1420,12 +1627,101 @@ function createMoonTexture() {
     context.fill();
   }
 
+  const basePixels = context.getImageData(0, 0, canvas.width, canvas.height);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearFilter;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.repeat.set(1.25, 1);
+  texture.generateMipmaps = false;
+  const phaseTexture = { canvas, context, texture, basePixels, lastPhase: -1 };
+  updateMoonPhaseTexture(phaseTexture, initialPhase);
+  return phaseTexture;
+}
+
+function updateMoonPhaseTexture(phaseTexture, phase) {
+  const normalizedPhase = THREE.MathUtils.euclideanModulo(phase, 1);
+  if (Math.abs(normalizedPhase - phaseTexture.lastPhase) < 0.0015) return;
+
+  const pixels = new ImageData(
+    new Uint8ClampedArray(phaseTexture.basePixels.data),
+    phaseTexture.canvas.width,
+    phaseTexture.canvas.height,
+  );
+  const phaseAngle = normalizedPhase * Math.PI * 2;
+  const lightX = Math.sin(phaseAngle);
+  const lightZ = -Math.cos(phaseAngle);
+  const radius = 89;
+  const center = 128;
+
+  for (let y = 0; y < phaseTexture.canvas.height; y += 1) {
+    for (let x = 0; x < phaseTexture.canvas.width; x += 1) {
+      const nx = (x - center) / radius;
+      const ny = (y - center) / radius;
+      const radial = nx * nx + ny * ny;
+      const index = (y * phaseTexture.canvas.width + x) * 4 + 3;
+      if (radial > 1) {
+        pixels.data[index] = 0;
+        continue;
+      }
+      const surfaceZ = Math.sqrt(1 - radial);
+      const lightAmount = nx * lightX + surfaceZ * lightZ;
+      const terminator = THREE.MathUtils.smoothstep(lightAmount, -0.035, 0.045);
+      pixels.data[index] = Math.round(pixels.data[index] * terminator);
+    }
+  }
+
+  phaseTexture.context.putImageData(pixels, 0, 0);
+  phaseTexture.texture.needsUpdate = true;
+  phaseTexture.lastPhase = normalizedPhase;
+}
+
+function createSunTexture(halo = false) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  const gradient = context.createRadialGradient(128, 128, halo ? 8 : 4, 128, 128, halo ? 126 : 94);
+  if (halo) {
+    gradient.addColorStop(0, "rgba(255, 244, 206, 0.24)");
+    gradient.addColorStop(0.2, "rgba(255, 218, 154, 0.13)");
+    gradient.addColorStop(0.58, "rgba(255, 181, 125, 0.045)");
+    gradient.addColorStop(1, "rgba(255, 169, 120, 0)");
+  } else {
+    gradient.addColorStop(0, "rgba(255, 253, 231, 1)");
+    gradient.addColorStop(0.7, "rgba(255, 248, 210, 1)");
+    gradient.addColorStop(0.93, "rgba(255, 232, 173, 0.99)");
+    gradient.addColorStop(0.975, "rgba(255, 224, 158, 0.92)");
+    gradient.addColorStop(1, "rgba(255, 222, 156, 0)");
+  }
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function createHorizonHazeTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, "rgba(255, 255, 255, 0)");
+  gradient.addColorStop(0.2, "rgba(255, 255, 255, 0.08)");
+  gradient.addColorStop(0.42, "rgba(255, 255, 255, 0.56)");
+  gradient.addColorStop(0.54, "rgba(255, 255, 255, 0.78)");
+  gradient.addColorStop(0.7, "rgba(255, 255, 255, 0.24)");
+  gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
   return texture;
 }
 
@@ -1528,6 +1824,22 @@ function createSquidStoneTexture() {
 function createWeatherVisuals() {
   const group = new THREE.Group();
 
+  const horizonHaze = new THREE.Mesh(
+    new THREE.CylinderGeometry(76, 76, 20, 96, 1, true),
+    new THREE.MeshBasicMaterial({
+      map: createHorizonHazeTexture(),
+      color: 0xa6d9d2,
+      transparent: true,
+      opacity: 0.88,
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+    }),
+  );
+  horizonHaze.position.y = 0.8;
+  horizonHaze.renderOrder = 1;
+  group.add(horizonHaze);
+
   const clouds = new THREE.Group();
   const cloudColors = [0xffffff, 0xffedf7, 0xfff3d8, 0xe7e3ff, 0xdaf8ff];
   const cloudPuffTexture = createCloudPuffTexture();
@@ -1571,7 +1883,15 @@ function createWeatherVisuals() {
   rainGeometry.setAttribute("position", new THREE.BufferAttribute(rainPositions, 3));
   const rain = new THREE.Points(
     rainGeometry,
-    new THREE.PointsMaterial({ color: 0xbde6ec, size: 0.045, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.PointsMaterial({
+      color: 0xbde6ec,
+      size: 0.12,
+      map: createRaindropPointTexture(),
+      transparent: true,
+      opacity: 0,
+      alphaTest: 0.01,
+      depthWrite: false,
+    })
   );
   group.add(rain);
 
@@ -1588,12 +1908,48 @@ function createWeatherVisuals() {
   starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
   const stars = new THREE.Points(
     starGeometry,
-    new THREE.PointsMaterial({ color: 0xfff5d6, size: 0.08, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.PointsMaterial({
+      color: 0xfff5d6,
+      size: 0.13,
+      map: createTwinklePointTexture(),
+      transparent: true,
+      opacity: 0,
+      alphaTest: 0.012,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
   );
   group.add(stars);
 
+  const sunVisual = new THREE.Group();
+  const sunHalo = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createSunTexture(true),
+      color: 0xffc18c,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  sunHalo.scale.set(10, 10, 1);
+  const sunCore = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createSunTexture(false),
+      color: 0xfff0c2,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+    })
+  );
+  sunCore.scale.set(2.55, 2.55, 1);
+  sunVisual.add(sunHalo, sunCore);
+  group.add(sunVisual);
+
   const moon = new THREE.Group();
-  moon.position.set(19, 17, -24);
+  const moonPhaseTexture = createMoonPhaseTexture(state.lunarPhase);
   const moonHalo = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createMoonHaloTexture(),
@@ -1601,20 +1957,22 @@ function createWeatherVisuals() {
       transparent: true,
       opacity: 0,
       depthWrite: false,
+      fog: false,
       blending: THREE.AdditiveBlending,
     })
   );
-  moonHalo.scale.set(7.4, 7.4, 1);
+  moonHalo.scale.set(6.6, 6.6, 1);
   const moonCore = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: createMoonTexture(),
+      map: moonPhaseTexture.texture,
       color: 0xfff5d8,
       transparent: true,
       opacity: 0,
       depthWrite: false,
+      fog: false,
     })
   );
-  moonCore.scale.set(2.35, 2.35, 1);
+  moonCore.scale.set(3, 3, 1);
   moon.add(moonHalo, moonCore);
   group.add(moon);
 
@@ -1633,9 +1991,11 @@ function createWeatherVisuals() {
     sparkleGeometry,
     new THREE.PointsMaterial({
       color: 0xfff1be,
-      size: 0.082,
+      size: 0.12,
+      map: createSoftPointTexture(),
       transparent: true,
       opacity: 0.22,
+      alphaTest: 0.012,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
@@ -1643,7 +2003,21 @@ function createWeatherVisuals() {
   sparkles.userData.basePositions = sparklePositions.slice();
   group.add(sparkles);
 
-  return { group, clouds, rain, stars, moon, moonCore, moonHalo, sparkles };
+  return {
+    group,
+    horizonHaze,
+    clouds,
+    rain,
+    stars,
+    sunVisual,
+    sunCore,
+    sunHalo,
+    moon,
+    moonCore,
+    moonHalo,
+    moonPhaseTexture,
+    sparkles,
+  };
 }
 
 function addScenery() {
@@ -1705,6 +2079,7 @@ function addScenery() {
   addBeachUmbrella(-10.5, 6.4);
   addPier(14.5, -5.5);
   addMarineLife();
+  addLargeMarineLife();
 }
 
 function addBeachUmbrella(x, z) {
@@ -1786,6 +2161,10 @@ function addMarineLife() {
 
 function addMarineItem(item) {
   item.group.scale.setScalar(item.kind === "fish" ? 0.85 + Math.random() * 0.45 : 0.72 + Math.random() * 0.32);
+  item.home = item.center.clone();
+  item.targetCenter = item.center.clone();
+  item.curiosity = 0;
+  item.reactionTimer = Math.random() * 1.4;
   roots.scenery.add(item.group);
   marineLife.push(item);
 }
@@ -1796,88 +2175,545 @@ function randomSeaPoint(minRadius, maxRadius) {
   return new THREE.Vector2(Math.cos(angle) * 17.2 * radius, Math.sin(angle) * 12.8 * radius);
 }
 
+function createMarineFin(points, material, depth = 0.018) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i += 1) shape.lineTo(points[i][0], points[i][1]);
+  shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelSize: 0.006,
+    bevelThickness: 0.004,
+    bevelSegments: 2,
+  });
+  geometry.translate(0, 0, -depth * 0.5);
+  return new THREE.Mesh(geometry, material);
+}
+
+function createMarineLimb(start, end, radius, material, radialSegments = 7) {
+  const direction = end.clone().sub(start);
+  const limb = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.82, radius, direction.length(), radialSegments),
+    material,
+  );
+  limb.position.copy(start).add(end).multiplyScalar(0.5);
+  limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  return limb;
+}
+
 function createFish(color) {
   const group = new THREE.Group();
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.02 });
-  const finMaterial = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.24), roughness: 0.62 });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 6), bodyMaterial);
-  body.scale.set(1.55, 0.62, 0.72);
+  const bodyColor = new THREE.Color(color);
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.48, metalness: 0.04 });
+  const bellyMaterial = new THREE.MeshStandardMaterial({
+    color: bodyColor.clone().lerp(new THREE.Color(0xfff1cf), 0.48),
+    roughness: 0.6,
+  });
+  const finMaterial = new THREE.MeshStandardMaterial({
+    color: bodyColor.clone().lerp(new THREE.Color(0xffffff), 0.28),
+    roughness: 0.56,
+    transparent: true,
+    opacity: 0.92,
+    side: THREE.DoubleSide,
+  });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 12), bodyMaterial);
+  body.scale.set(1.72, 0.74, 0.92);
   group.add(body);
 
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.26, 3), finMaterial);
-  tail.position.x = -0.33;
-  tail.rotation.z = Math.PI / 2;
-  tail.userData.tail = true;
-  group.add(tail);
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.176, 18, 10, 0, Math.PI * 2, Math.PI * 0.48, Math.PI * 0.52), bellyMaterial);
+  belly.scale.set(1.68, 0.77, 0.9);
+  belly.position.y = -0.008;
+  group.add(belly);
 
-  const fin = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.18, 3), finMaterial);
-  fin.position.set(0.02, 0.13, 0);
-  fin.rotation.x = Math.PI;
-  group.add(fin);
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -0.285;
+  tailPivot.userData.tail = true;
+  const tail = createMarineFin([
+    [0.015, 0],
+    [-0.19, 0.17],
+    [-0.285, 0.12],
+    [-0.235, 0.02],
+    [-0.29, -0.105],
+    [-0.18, -0.17],
+  ], finMaterial, 0.026);
+  tailPivot.add(tail);
+  group.add(tailPivot);
 
-  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x172636 });
-  const eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 4), eyeMaterial);
-  eyeLeft.position.set(0.22, 0.035, 0.09);
-  const eyeRight = eyeLeft.clone();
-  eyeRight.position.z = -0.09;
-  group.add(eyeLeft, eyeRight);
+  const dorsalFin = createMarineFin([
+    [-0.13, 0],
+    [-0.04, 0.135],
+    [0.09, 0.035],
+    [0.15, 0],
+  ], finMaterial, 0.022);
+  dorsalFin.position.set(-0.03, 0.105, 0);
+  group.add(dorsalFin);
+
+  for (const side of [-1, 1]) {
+    const pectoralFin = createMarineFin([[0, 0], [-0.13, -0.075], [0.035, -0.035]], finMaterial, 0.015);
+    pectoralFin.position.set(0.1, -0.015, side * 0.14);
+    pectoralFin.rotation.x = side * Math.PI * 0.46;
+    group.add(pectoralFin);
+  }
+
+  const eyeWhiteMaterial = new THREE.MeshStandardMaterial({ color: 0xfff7df, roughness: 0.36 });
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x142231 });
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 7), eyeWhiteMaterial);
+    eye.position.set(0.245, 0.045, side * 0.105);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.011, 8, 6), eyeMaterial);
+    pupil.position.set(0.016, 0.002, side * 0.007);
+    eye.add(pupil);
+    group.add(eye);
+  }
+
+  const gillMaterial = new THREE.LineBasicMaterial({ color: bodyColor.clone().multiplyScalar(0.64), transparent: true, opacity: 0.68 });
+  for (const side of [-1, 1]) {
+    const gill = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0.145, 0.075, side * 0.151),
+        new THREE.Vector3(0.125, 0, side * 0.165),
+        new THREE.Vector3(0.14, -0.065, side * 0.145),
+      ]),
+      gillMaterial,
+    );
+    group.add(gill);
+  }
   return group;
 }
 
 function createShrimp() {
   const group = new THREE.Group();
-  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0xff9f8e, roughness: 0.72 });
-  const legMaterial = new THREE.MeshBasicMaterial({ color: 0xffd1bc, transparent: true, opacity: 0.74 });
-  for (let i = 0; i < 5; i += 1) {
-    const segment = new THREE.Mesh(new THREE.SphereGeometry(0.07 - i * 0.004, 8, 5), shellMaterial);
-    segment.position.set(i * -0.085, Math.sin(i * 0.8) * 0.025, 0);
-    segment.scale.set(1.2, 0.72, 0.82);
+  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0xff9b83, roughness: 0.56, metalness: 0.02 });
+  const shellLightMaterial = new THREE.MeshStandardMaterial({ color: 0xffc1a8, roughness: 0.62 });
+  const legMaterial = new THREE.MeshBasicMaterial({ color: 0xffd8c2, transparent: true, opacity: 0.82 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.105, 16, 10), shellMaterial);
+  head.position.set(0.13, 0.035, 0);
+  head.scale.set(1.3, 0.88, 0.92);
+  group.add(head);
+
+  for (let i = 0; i < 7; i += 1) {
+    const segment = new THREE.Mesh(new THREE.SphereGeometry(0.076 - i * 0.0048, 14, 8), i % 2 ? shellLightMaterial : shellMaterial);
+    const curve = i / 6;
+    segment.position.set(0.035 - i * 0.078, 0.025 + Math.sin(curve * Math.PI) * 0.055, 0);
+    segment.scale.set(1.1, 0.72, 0.88);
     segment.userData.shrimpSegment = true;
     group.add(segment);
   }
 
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.16, 4), shellMaterial);
-  tail.position.x = -0.47;
-  tail.rotation.z = -Math.PI / 2;
-  tail.userData.tail = true;
-  group.add(tail);
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.45, 0.02, 0);
+  tailPivot.userData.tail = true;
+  for (const side of [-1, 0, 1]) {
+    const tailFan = createMarineFin([[0, 0], [-0.16, 0.075], [-0.21, 0], [-0.15, -0.07]], shellLightMaterial, 0.018);
+    tailFan.rotation.x = side * 0.48;
+    tailFan.position.z = side * 0.025;
+    tailPivot.add(tailFan);
+  }
+  group.add(tailPivot);
+
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x251b25 });
+  for (const side of [-1, 1]) {
+    const stalk = createMarineLimb(
+      new THREE.Vector3(0.17, 0.08, side * 0.045),
+      new THREE.Vector3(0.205, 0.13, side * 0.082),
+      0.009,
+      shellLightMaterial,
+      6,
+    );
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), eyeMaterial);
+    eye.position.set(0.205, 0.13, side * 0.082);
+    group.add(stalk, eye);
+  }
 
   for (const side of [-1, 1]) {
-    const whiskerGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0.1, 0.02, side * 0.035),
-      new THREE.Vector3(0.38, 0.08, side * 0.18),
+    const whiskerCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.2, 0.07, side * 0.045),
+      new THREE.Vector3(0.34, 0.13, side * 0.1),
+      new THREE.Vector3(0.5, 0.1, side * 0.2),
+      new THREE.Vector3(0.62, 0.02, side * 0.28),
     ]);
-    const whisker = new THREE.Line(whiskerGeometry, legMaterial);
+    const whisker = new THREE.Mesh(new THREE.TubeGeometry(whiskerCurve, 12, 0.0045, 5, false), legMaterial);
     whisker.userData.feeler = true;
     group.add(whisker);
+
+    for (let i = 0; i < 5; i += 1) {
+      const x = 0.045 - i * 0.07;
+      const leg = createMarineLimb(
+        new THREE.Vector3(x, -0.015, side * 0.045),
+        new THREE.Vector3(x - 0.025, -0.12, side * (0.1 + i * 0.008)),
+        0.0045,
+        legMaterial,
+        5,
+      );
+      group.add(leg);
+    }
   }
   return group;
 }
 
 function createCrab() {
   const group = new THREE.Group();
-  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0xd76f55, roughness: 0.84 });
-  const clawMaterial = new THREE.MeshStandardMaterial({ color: 0xffad7d, roughness: 0.78 });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 6), shellMaterial);
-  body.scale.set(1.25, 0.44, 0.92);
+  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0xd7654f, roughness: 0.68 });
+  const shellTopMaterial = new THREE.MeshStandardMaterial({ color: 0xee8060, roughness: 0.6 });
+  const clawMaterial = new THREE.MeshStandardMaterial({ color: 0xffa071, roughness: 0.64 });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.17, 18, 10), shellMaterial);
+  body.scale.set(1.32, 0.48, 0.98);
   group.add(body);
 
+  const shellTop = new THREE.Mesh(new THREE.SphereGeometry(0.158, 18, 9, 0, Math.PI * 2, 0, Math.PI * 0.48), shellTopMaterial);
+  shellTop.scale.set(1.31, 0.5, 0.97);
+  shellTop.position.y = 0.006;
+  group.add(shellTop);
+
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x201b22 });
   for (const side of [-1, 1]) {
-    const claw = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 5), clawMaterial);
-    claw.position.set(0.18, 0.02, side * 0.18);
-    claw.scale.set(1.25, 0.65, 0.9);
+    const stalk = createMarineLimb(
+      new THREE.Vector3(0.13, 0.055, side * 0.07),
+      new THREE.Vector3(0.17, 0.15, side * 0.1),
+      0.012,
+      shellTopMaterial,
+    );
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.023, 9, 7), eyeMaterial);
+    eye.position.set(0.17, 0.15, side * 0.1);
+    group.add(stalk, eye);
+  }
+
+  for (const side of [-1, 1]) {
+    const claw = new THREE.Group();
+    claw.position.set(0.13, 0.015, side * 0.16);
     claw.userData.claw = side;
+    const arm = createMarineLimb(new THREE.Vector3(), new THREE.Vector3(0.1, 0.025, side * 0.12), 0.025, shellMaterial);
+    const palm = new THREE.Mesh(new THREE.SphereGeometry(0.065, 12, 8), clawMaterial);
+    palm.position.set(0.12, 0.035, side * 0.14);
+    palm.scale.set(1.3, 0.72, 0.95);
+    const upperPincer = createMarineLimb(
+      new THREE.Vector3(0.16, 0.055, side * 0.16),
+      new THREE.Vector3(0.265, 0.095, side * 0.205),
+      0.018,
+      clawMaterial,
+    );
+    const lowerPincer = createMarineLimb(
+      new THREE.Vector3(0.16, 0.02, side * 0.16),
+      new THREE.Vector3(0.26, -0.01, side * 0.205),
+      0.016,
+      clawMaterial,
+    );
+    claw.add(arm, palm, upperPincer, lowerPincer);
     group.add(claw);
 
-    for (let i = 0; i < 3; i += 1) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.28, 5), shellMaterial);
-      leg.position.set(-0.08 + i * 0.075, -0.02, side * (0.18 + i * 0.035));
-      leg.rotation.x = Math.PI / 2.8 * side;
-      leg.rotation.z = Math.PI / 2;
-      leg.userData.leg = side * (i + 1);
-      group.add(leg);
+    for (let i = 0; i < 4; i += 1) {
+      const legRoot = new THREE.Group();
+      legRoot.position.set(0.06 - i * 0.075, -0.015, side * 0.125);
+      legRoot.userData.leg = side * (i + 1);
+      const knee = new THREE.Vector3(-0.035 - i * 0.012, -0.045, side * (0.13 + i * 0.018));
+      const foot = new THREE.Vector3(-0.075 - i * 0.025, -0.085, side * (0.24 + i * 0.026));
+      legRoot.add(
+        createMarineLimb(new THREE.Vector3(), knee, 0.012, shellMaterial, 6),
+        createMarineLimb(knee, foot, 0.009, shellMaterial, 6),
+      );
+      group.add(legRoot);
     }
   }
+  return group;
+}
+
+function addLargeMarineLife() {
+  for (let i = 0; i < 2; i += 1) {
+    addLargeMarineItem({
+      kind: "whale",
+      creature: createWhale(),
+      orbitRadius: 28 + i * 4,
+      orbitFlattening: 0.72 + i * 0.04,
+      orbitSpeed: 0.026 + i * 0.004,
+      angleOffset: 1.4 + i * 2.8,
+    });
+  }
+
+  for (let i = 0; i < 4; i += 1) {
+    addLargeMarineItem({
+      kind: "dolphin",
+      creature: createDolphin(),
+      orbitRadius: 23 + (i % 2) * 4.5,
+      orbitFlattening: 0.7 + (i % 3) * 0.04,
+      orbitSpeed: 0.045 + (i % 2) * 0.008,
+      angleOffset: 0.7 + i * 1.38,
+    });
+  }
+
+  for (let i = 0; i < 2; i += 1) {
+    addLargeMarineItem({
+      kind: "shark",
+      creature: createShark(),
+      orbitRadius: 26 + i * 5,
+      orbitFlattening: 0.74,
+      orbitSpeed: 0.03 + i * 0.006,
+      angleOffset: 2.2 + i * Math.PI,
+    });
+  }
+}
+
+function addLargeMarineItem(item) {
+  const root = new THREE.Group();
+  const splash = item.kind === "shark" ? null : createBreachSplash(item.kind === "whale" ? 1.4 : 0.72);
+  root.add(item.creature);
+  if (splash) root.add(splash);
+  item.root = root;
+  item.splash = splash;
+  item.seed = Math.random() * Math.PI * 2;
+  item.creature.visible = item.kind === "shark";
+  roots.scenery.add(root);
+  largeMarineLife.push(item);
+}
+
+function createStreamlinedMarineBody(profile, dorsalColor, bellyColor, roughness = 0.52) {
+  const radiusMax = Math.max(...profile.map((point) => point[1]));
+  const geometry = new THREE.LatheGeometry(
+    profile.map(([x, radius]) => new THREE.Vector2(radius, x)),
+    32,
+  );
+  geometry.rotateZ(-Math.PI / 2);
+
+  const dorsal = new THREE.Color(dorsalColor);
+  const belly = new THREE.Color(bellyColor);
+  const colors = [];
+  const positions = geometry.attributes.position;
+  for (let i = 0; i < positions.count; i += 1) {
+    const underside = THREE.MathUtils.clamp((-positions.getY(i) / radiusMax - 0.05) / 0.78, 0, 1);
+    const blend = underside * underside * (3 - 2 * underside);
+    const color = dorsal.clone().lerp(belly, blend);
+    colors.push(color.r, color.g, color.b);
+  }
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  return new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness: 0.025 }),
+  );
+}
+
+function createMarineDetailCurve(points, radius, material) {
+  const curve = new THREE.CatmullRomCurve3(points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  return new THREE.Mesh(new THREE.TubeGeometry(curve, 12, radius, 5, false), material);
+}
+
+function createWhale() {
+  const group = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0x476f82, roughness: 0.5, metalness: 0.025 });
+  const fin = new THREE.MeshStandardMaterial({ color: 0x31586c, roughness: 0.54, side: THREE.DoubleSide });
+  const detail = new THREE.MeshBasicMaterial({ color: 0x183845, transparent: true, opacity: 0.82 });
+  const throat = new THREE.MeshBasicMaterial({ color: 0x769da8, transparent: true, opacity: 0.54 });
+
+  const body = createStreamlinedMarineBody([
+    [-1.45, 0.1], [-1.2, 0.25], [-0.72, 0.48], [-0.12, 0.61],
+    [0.48, 0.58], [0.98, 0.45], [1.32, 0.29], [1.48, 0.07],
+  ], 0x3d697b, 0x9bbbc2, 0.5);
+  body.scale.z = 0.88;
+  group.add(body);
+
+  const rostrum = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 14), skin);
+  rostrum.position.set(1.28, -0.055, 0);
+  rostrum.scale.set(1.22, 0.56, 0.92);
+  group.add(rostrum);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -1.38;
+  tailPivot.userData.tail = true;
+  tailPivot.userData.tailMotion = "pitch";
+  const tailStock = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, 0.58, 14), skin);
+  tailStock.rotation.z = Math.PI / 2;
+  tailStock.position.x = -0.25;
+  const flukes = createMarineFin([
+    [0.02, 0], [-0.12, 0.07], [-0.38, 0.32], [-0.66, 0.49],
+    [-0.58, 0.15], [-0.33, 0], [-0.58, -0.15], [-0.66, -0.49], [-0.38, -0.32], [-0.12, -0.07],
+  ], fin, 0.065);
+  flukes.rotation.x = Math.PI / 2;
+  flukes.position.x = -0.52;
+  tailPivot.add(tailStock, flukes);
+  group.add(tailPivot);
+
+  const dorsal = createMarineFin([[-0.18, 0], [-0.04, 0.19], [0.12, 0.12], [0.25, 0]], fin, 0.052);
+  dorsal.position.set(-0.48, 0.45, 0);
+  group.add(dorsal);
+
+  for (const side of [-1, 1]) {
+    const pectoral = createMarineFin([[0.12, 0], [-0.36, -0.08], [-0.88, -0.32], [-0.55, 0.14], [-0.08, 0.2]], fin, 0.048);
+    pectoral.position.set(0.42, -0.16, side * 0.42);
+    pectoral.rotation.x = side * Math.PI * 0.47;
+    pectoral.rotation.y = side * -0.08;
+    group.add(pectoral);
+
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.038, 12, 8), detail);
+    eye.position.set(1.01, 0.1, side * 0.45);
+    group.add(eye);
+
+    const mouth = createMarineDetailCurve([
+      [1.47, -0.08, side * 0.05], [1.24, -0.17, side * 0.27], [0.9, -0.2, side * 0.39],
+    ], 0.009, detail);
+    group.add(mouth);
+
+    for (let i = 0; i < 5; i += 1) {
+      const groove = createMarineDetailCurve([
+        [1.16 - i * 0.08, -0.29, side * 0.08], [0.92 - i * 0.09, -0.42, side * 0.12], [0.55 - i * 0.07, -0.47, side * 0.1],
+      ], 0.006, throat);
+      group.add(groove);
+    }
+  }
+
+  for (const side of [-1, 1]) {
+    const blowhole = new THREE.Mesh(new THREE.SphereGeometry(0.038, 10, 6), detail);
+    blowhole.position.set(0.82, 0.43, side * 0.07);
+    blowhole.scale.set(1.5, 0.25, 0.62);
+    group.add(blowhole);
+  }
+  group.scale.setScalar(0.72);
+  return group;
+}
+
+function createDolphin() {
+  const group = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0x4b879d, roughness: 0.44, metalness: 0.035 });
+  const beakMaterial = new THREE.MeshStandardMaterial({ color: 0x86b2bc, roughness: 0.52 });
+  const fin = new THREE.MeshStandardMaterial({ color: 0x39758b, roughness: 0.48, side: THREE.DoubleSide });
+  const detail = new THREE.MeshBasicMaterial({ color: 0x102b35 });
+
+  const body = createStreamlinedMarineBody([
+    [-0.72, 0.045], [-0.59, 0.12], [-0.34, 0.23], [0.04, 0.29],
+    [0.34, 0.25], [0.55, 0.16], [0.67, 0.05],
+  ], 0x4b879d, 0xb9d7d9, 0.44);
+  body.scale.z = 0.9;
+  group.add(body);
+
+  const melon = new THREE.Mesh(new THREE.SphereGeometry(0.19, 22, 14), skin);
+  melon.position.set(0.53, 0.075, 0);
+  melon.scale.set(1.16, 0.86, 0.92);
+  const beak = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.066, 0.34, 14), beakMaterial);
+  beak.rotation.z = -Math.PI / 2;
+  beak.position.set(0.78, -0.028, 0);
+  group.add(melon, beak);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -0.68;
+  tailPivot.userData.tail = true;
+  tailPivot.userData.tailMotion = "pitch";
+  const tailStock = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.07, 0.25, 10), skin);
+  tailStock.rotation.z = Math.PI / 2;
+  tailStock.position.x = -0.1;
+  const flukes = createMarineFin([
+    [0, 0], [-0.08, 0.025], [-0.23, 0.18], [-0.37, 0.24], [-0.31, 0.07],
+    [-0.18, 0], [-0.31, -0.07], [-0.37, -0.24], [-0.23, -0.18], [-0.08, -0.025],
+  ], fin, 0.026);
+  flukes.rotation.x = Math.PI / 2;
+  flukes.position.x = -0.2;
+  tailPivot.add(tailStock, flukes);
+  group.add(tailPivot);
+
+  const dorsal = createMarineFin([[-0.12, 0], [-0.02, 0.31], [0.12, 0.19], [0.22, 0]], fin, 0.027);
+  dorsal.position.set(-0.13, 0.2, 0);
+  group.add(dorsal);
+  for (const side of [-1, 1]) {
+    const pectoral = createMarineFin([[0.04, 0], [-0.2, -0.05], [-0.42, -0.16], [-0.22, 0.13]], fin, 0.023);
+    pectoral.position.set(0.18, -0.06, side * 0.19);
+    pectoral.rotation.x = side * Math.PI * 0.46;
+    group.add(pectoral);
+
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.017, 10, 7), detail);
+    eye.position.set(0.55, 0.09, side * 0.155);
+    group.add(eye);
+    const smile = createMarineDetailCurve([
+      [0.89, -0.045, side * 0.032], [0.72, -0.07, side * 0.07], [0.57, -0.045, side * 0.13],
+    ], 0.0045, detail);
+    group.add(smile);
+  }
+  group.scale.setScalar(1.08);
+  return group;
+}
+
+function createShark() {
+  const group = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0x526f78, roughness: 0.5, metalness: 0.02 });
+  const fin = new THREE.MeshStandardMaterial({ color: 0x405f69, roughness: 0.54, side: THREE.DoubleSide });
+  const detail = new THREE.MeshBasicMaterial({ color: 0x101b1d });
+  const gillMaterial = new THREE.MeshBasicMaterial({ color: 0x304b52, transparent: true, opacity: 0.78 });
+
+  const body = createStreamlinedMarineBody([
+    [-0.92, 0.055], [-0.75, 0.15], [-0.38, 0.28], [0.04, 0.33],
+    [0.4, 0.29], [0.72, 0.2], [0.94, 0.095], [1.04, 0.025],
+  ], 0x526f78, 0xc2d0cb, 0.5);
+  body.scale.z = 0.84;
+  group.add(body);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -0.88;
+  tailPivot.userData.tail = true;
+  const tailStock = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.09, 0.32, 10), skin);
+  tailStock.rotation.z = Math.PI / 2;
+  tailStock.position.x = -0.13;
+  const tail = createMarineFin([
+    [0, 0], [-0.12, 0.05], [-0.28, 0.39], [-0.42, 0.52], [-0.38, 0.16],
+    [-0.29, 0], [-0.39, -0.27], [-0.31, -0.34], [-0.13, -0.08],
+  ], fin, 0.04);
+  tail.position.x = -0.24;
+  tailPivot.add(tailStock, tail);
+  group.add(tailPivot);
+
+  const dorsal = createMarineFin([[-0.18, 0], [-0.02, 0.48], [0.12, 0.35], [0.27, 0]], fin, 0.04);
+  dorsal.position.set(-0.12, 0.26, 0);
+  group.add(dorsal);
+  const rearDorsal = createMarineFin([[-0.08, 0], [0, 0.15], [0.13, 0]], fin, 0.024);
+  rearDorsal.position.set(-0.61, 0.14, 0);
+  group.add(rearDorsal);
+
+  for (const side of [-1, 1]) {
+    const pectoral = createMarineFin([[0.07, 0], [-0.18, -0.06], [-0.55, -0.22], [-0.31, 0.16]], fin, 0.03);
+    pectoral.position.set(0.22, -0.06, side * 0.24);
+    pectoral.rotation.x = side * Math.PI * 0.45;
+    group.add(pectoral);
+
+    const pelvic = createMarineFin([[0.03, 0], [-0.18, -0.08], [-0.1, 0.08]], fin, 0.021);
+    pelvic.position.set(-0.46, -0.05, side * 0.15);
+    pelvic.rotation.x = side * Math.PI * 0.43;
+    group.add(pelvic);
+
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 7), detail);
+    eye.position.set(0.7, 0.095, side * 0.19);
+    group.add(eye);
+
+    for (let i = 0; i < 4; i += 1) {
+      const x = 0.48 - i * 0.055;
+      const gill = createMarineDetailCurve([
+        [x, 0.08, side * 0.235], [x - 0.015, 0, side * 0.255], [x, -0.085, side * 0.23],
+      ], 0.006, gillMaterial);
+      group.add(gill);
+    }
+
+    const mouth = createMarineDetailCurve([
+      [0.99, -0.08, side * 0.045], [0.86, -0.15, side * 0.13], [0.68, -0.17, side * 0.19],
+    ], 0.007, detail);
+    group.add(mouth);
+  }
+  group.scale.setScalar(1.04);
+  return group;
+}
+
+function createBreachSplash(size) {
+  const group = new THREE.Group();
+  const rings = [];
+  for (let i = 0; i < 2; i += 1) {
+    const material = new THREE.MeshBasicMaterial({
+      color: i === 0 ? 0xe5fbff : 0xa9e9ef,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(size * (0.32 + i * 0.18), size * (0.42 + i * 0.2), 40), material);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02 + i * 0.008;
+    group.add(ring);
+    rings.push(ring);
+  }
+  group.userData.rings = rings;
   return group;
 }
 
@@ -3010,6 +3846,10 @@ function addPerson(group, moldType = null) {
     panic: 0,
     bob: Math.random() * Math.PI * 2,
     retargetAt: 0,
+    behavior: "wander",
+    interestBuild: null,
+    visitTimer: 0,
+    visitCooldown: 1.5 + Math.random() * 3,
   });
 }
 
@@ -5149,13 +5989,14 @@ function loadHighFidelityCarModel() {
 function prepareHighFidelityCarModel(source) {
   const customizedMaterials = new Set();
   const hiddenPartNames = new Set(["License Plate", "InteriorSteeringEmblem"]);
+  const maxAnisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
 
   source.traverse((object) => {
     if (hiddenPartNames.has(object.name)) object.visible = false;
     if (!object.isMesh) return;
 
     const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
-    objectMaterials.forEach((material) => customizeHighFidelityCarMaterial(material, customizedMaterials));
+    objectMaterials.forEach((material) => customizeHighFidelityCarMaterial(material, customizedMaterials, maxAnisotropy));
     const isGlass = objectMaterials.some((material) => material?.name === "Glass");
     object.castShadow = !isGlass;
     object.receiveShadow = true;
@@ -5164,9 +6005,9 @@ function prepareHighFidelityCarModel(source) {
   const initialBounds = new THREE.Box3().setFromObject(source);
   const initialSize = initialBounds.getSize(new THREE.Vector3());
   source.scale.set(
-    1.68 / initialSize.x,
-    1.12 / initialSize.y,
-    3.92 / initialSize.z,
+    1.84 / initialSize.x,
+    1.18 / initialSize.y,
+    3.95 / initialSize.z,
   );
   source.updateMatrixWorld(true);
 
@@ -5185,28 +6026,69 @@ function prepareHighFidelityCarModel(source) {
   return normalizedCar;
 }
 
-function customizeHighFidelityCarMaterial(material, customizedMaterials) {
+function customizeHighFidelityCarMaterial(material, customizedMaterials, maxAnisotropy) {
   if (!material || customizedMaterials.has(material)) return;
   customizedMaterials.add(material);
+  material.envMap = carEnvironmentMap;
+  material.envMapIntensity = 0.72;
+
+  for (const textureName of ["map", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "emissiveMap"]) {
+    if (material[textureName]) material[textureName].anisotropy = maxAnisotropy;
+  }
 
   if (material.name === "Paint 1 Carmine") {
-    material.color.set(0x00aabd);
-    material.roughness = 0.24;
-    material.metalness = 0.58;
+    material.color.set(0x087f8d);
+    material.roughness = 0.18;
+    material.metalness = 0.68;
+    material.clearcoat = 1;
+    material.clearcoatRoughness = 0.07;
+    material.envMapIntensity = 1.32;
   } else if (material.name === "Paint 2 Carmine") {
-    material.color.set(0x075764);
-    material.roughness = 0.28;
-    material.metalness = 0.52;
+    material.color.set(0x064c58);
+    material.roughness = 0.22;
+    material.metalness = 0.62;
+    material.clearcoat = 0.72;
+    material.clearcoatRoughness = 0.1;
+    material.envMapIntensity = 1.18;
   } else if (material.name === "Interior 3 Carmine") {
-    material.color.set(0xbda88f);
-    material.roughness = 0.68;
+    material.color.set(0xc7b498);
+    material.roughness = 0.62;
+    material.envMapIntensity = 0.38;
+  } else if (material.name === "Interior 1" || material.name === "Interior 2" || material.name === "Panel Sides") {
+    material.color.set(0x24282a);
+    material.roughness = 0.58;
+    material.envMapIntensity = 0.34;
   } else if (material.name === "Glass") {
-    material.color.set(0x88aeb9);
-    material.opacity = 0.72;
-    material.transmission = 0.28;
-    material.roughness = 0.08;
-    material.transparent = true;
-    material.depthWrite = false;
+    material.color.set(0xb6d3da);
+    material.opacity = 1;
+    material.transmission = 0.88;
+    material.roughness = 0.055;
+    material.metalness = 0;
+    material.ior = 1.46;
+    material.thickness = 0.025;
+    material.transparent = false;
+    material.depthWrite = true;
+    material.side = THREE.DoubleSide;
+    material.envMapIntensity = 1.25;
+  } else if (material.name === "Tireside" || material.name === "Tiretread") {
+    material.color.set(0x151719);
+    material.roughness = 0.78;
+    material.metalness = 0;
+    material.envMapIntensity = 0.28;
+  } else if (material.name === "Rim1" || material.name === "Rim2" || material.name === "Disc") {
+    material.metalness = 0.86;
+    material.roughness = material.name === "Disc" ? 0.46 : 0.18;
+    material.envMapIntensity = 1.08;
+  } else if (material.name === "Headlight") {
+    material.emissive.set(0xbcdcff);
+    material.emissiveIntensity = 7.5;
+    material.envMapIntensity = 1.1;
+  } else if (material.name === "Brakelight") {
+    material.emissive.set(0xff1f12);
+    material.emissiveIntensity = 3.2;
+  } else if (material.name === "Signallight") {
+    material.emissive.set(0xffa52f);
+    material.emissiveIntensity = 2.4;
   }
 
   material.needsUpdate = true;
@@ -5225,7 +6107,7 @@ function createCar(x, z, rotation) {
   group.userData.baseRadius = 2.05;
   group.userData.mass = 1.35;
   group.userData.snapPoints = radialSnapPoints(x, z, 2.02, 8);
-  group.userData.erosion = { shape: "wall", width: 4.02, depth: 1.72, localY: 0 };
+  group.userData.erosion = { shape: "wall", width: 4.05, depth: 1.94, localY: 0 };
 
   if (carModelTemplate) attachHighFidelityCarModel(group);
   else pendingCarGroups.add(group);
@@ -5767,8 +6649,37 @@ function createPerson(x, z) {
   brim.castShadow = true;
   group.add(brim);
 
+  const camera = new THREE.Group();
+  camera.position.set(0, 0.69, 0.205);
+  camera.visible = false;
+  const cameraBody = new THREE.Mesh(
+    new RoundedBoxGeometry(0.13, 0.085, 0.055, 2, 0.012),
+    new THREE.MeshStandardMaterial({ color: 0x26353b, roughness: 0.32, metalness: 0.42 }),
+  );
+  const cameraLens = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.027, 0.027, 0.025, 12),
+    new THREE.MeshStandardMaterial({ color: 0x15252e, roughness: 0.16, metalness: 0.72 }),
+  );
+  cameraLens.position.z = 0.04;
+  cameraLens.rotation.x = Math.PI / 2;
+  camera.add(cameraBody, cameraLens);
+  group.add(camera);
+
+  const cameraFlash = new THREE.Sprite(new THREE.SpriteMaterial({
+    color: 0xfff1b8,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  cameraFlash.position.set(0, 0.72, 0.27);
+  cameraFlash.scale.setScalar(0.01);
+  group.add(cameraFlash);
+
   group.userData.legs = legs;
   group.userData.arms = arms;
+  group.userData.camera = camera;
+  group.userData.cameraFlash = cameraFlash;
   return group;
 }
 
@@ -6002,6 +6913,7 @@ function animate() {
   ocean.water.position.y = waterLevel;
   animateWater(dt, elapsed, waterLevel);
   updateMarineLife(dt, elapsed, waterLevel);
+  updateLargeMarineLife(dt, elapsed, waterLevel);
   updateFloodProtection(dt);
   updateBuildPhysics(dt, elapsed, waterLevel);
   updateDecorations(dt, elapsed, waterLevel);
@@ -6065,7 +6977,9 @@ function animateWater(dt, elapsed, waterLevel) {
 
 function updateWeatherCycle(dt, elapsed) {
   if (!state.timePaused) {
-    state.dayTime = (state.dayTime + dt * 0.0055) % 1;
+    const dayAdvance = dt * 0.0055;
+    state.dayTime = (state.dayTime + dayAdvance) % 1;
+    state.lunarPhase = (state.lunarPhase + dayAdvance / 12) % 1;
     state.weatherTimer -= dt;
     if (state.weatherTimer <= 0) {
       state.weather = pickWeather();
@@ -6080,9 +6994,10 @@ function updateWeatherCycle(dt, elapsed) {
   const night = 1 - daylight;
   const weatherDim = state.weather === "rainy" ? 0.55 : state.weather === "cloudy" ? 0.72 : 1;
 
-  const sunAngle = state.dayTime * Math.PI * 2 - Math.PI / 2;
-  sun.position.set(Math.cos(sunAngle) * 26, Math.max(-5, Math.sin(sunAngle) * 30), 12);
-  sun.intensity = (0.25 + daylight * 3.3) * weatherDim;
+  const sunTravel = THREE.MathUtils.clamp((state.dayTime - 0.18) / 0.7, 0, 1);
+  const sunArcHeight = 1.8 + Math.sin(sunTravel * Math.PI) * 10.5;
+  sun.position.set((sunTravel - 0.5) * 54, Math.max(-5, sunArcHeight), 12);
+  sun.intensity = (0.05 + daylight * 3.5) * weatherDim;
   sun.color.copy(frameColors.sunDay).lerp(frameColors.sunWarm, Math.max(sunrise, sunset) * 0.65);
   moonLight.intensity = night * (state.weather === "rainy" ? 0.28 : 0.62);
 
@@ -6092,7 +7007,7 @@ function updateWeatherCycle(dt, elapsed) {
 
   const sky = frameColors.sky
     .copy(frameColors.skyDay)
-    .lerp(frameColors.skySunset, Math.max(sunrise, sunset) * 0.46)
+    .lerp(frameColors.skySunset, Math.max(sunrise, sunset) * 0.22)
     .lerp(frameColors.skyNight, night * 0.78)
     .lerp(frameColors.skyRain, state.weather === "rainy" ? 0.36 : state.weather === "cloudy" ? 0.18 : 0);
   scene.fog.color.copy(sky);
@@ -6114,15 +7029,19 @@ function updateWeatherVisuals(dt, elapsed, daylight, night, sunrise, sunset) {
     nextSkyTextureUpdate = elapsed + 1 / 15;
     const skyTop = frameColors.skyTop
       .copy(frameColors.skyTopDay)
-      .lerp(frameColors.skyTopSunset, horizonGlow * 0.34)
+      .lerp(frameColors.skyTopSunset, horizonGlow * 0.2)
       .lerp(frameColors.skyTopNight, night * 0.82)
       .lerp(frameColors.skyTopRain, rainy ? 0.32 : state.weather === "cloudy" ? 0.14 : 0);
     const skyHorizon = frameColors.skyHorizon
       .copy(frameColors.horizonDay)
-      .lerp(frameColors.horizonSunset, horizonGlow * 0.58)
+      .lerp(frameColors.horizonSunset, horizonGlow * 0.28)
       .lerp(frameColors.horizonNight, night * 0.72)
       .lerp(frameColors.horizonRain, rainy ? 0.28 : 0);
-    updateSkyGradient(skyTop, skyHorizon);
+    updateSkyGradient(skyTop, skyHorizon, frameColors.sky, horizonGlow);
+    weatherVisuals.horizonHaze.material.color
+      .copy(frameColors.skyAtmosphere)
+      .lerp(ocean.water.material.color, rainy ? 0.12 : 0.07);
+    weatherVisuals.horizonHaze.material.opacity = rainy ? 0.94 : 0.88;
   }
 
   const cloudiness = state.weather === "sunny" ? 0.28 : state.weather === "cloudy" ? 1 : 0.86;
@@ -6158,9 +7077,41 @@ function updateWeatherVisuals(dt, elapsed, daylight, night, sunrise, sunset) {
   weatherVisuals.stars.material.opacity = THREE.MathUtils.clamp(night * 0.76 - (rainy ? 0.32 : 0), 0, 0.78);
   weatherVisuals.stars.material.size = 0.075 + Math.sin(elapsed * 1.4) * 0.012;
 
-  const moonOpacity = THREE.MathUtils.clamp(night * 0.9 - (rainy ? 0.22 : 0), 0, 0.86);
+  const sunTravel = THREE.MathUtils.clamp((state.dayTime - 0.18) / 0.7, 0, 1);
+  const sunArcHeight = 1.8 + Math.sin(sunTravel * Math.PI) * 10.5;
+  const sunWindow = smoothstep(0.18, 0.235, state.dayTime) * (1 - smoothstep(0.825, 0.88, state.dayTime));
+  const sunWeatherVisibility = state.weather === "rainy" ? 0.18 : state.weather === "cloudy" ? 0.48 : 1;
+  const sunOpacity = sunWindow * sunWeatherVisibility;
+  weatherVisuals.sunVisual.position.set(-26 + sunTravel * 52, sunArcHeight, -44);
+  weatherVisuals.sunCore.material.opacity = THREE.MathUtils.lerp(weatherVisuals.sunCore.material.opacity, sunOpacity * 0.96, dt * 3);
+  weatherVisuals.sunHalo.material.opacity = THREE.MathUtils.lerp(
+    weatherVisuals.sunHalo.material.opacity,
+    sunOpacity * (0.28 + horizonGlow * 0.34),
+    dt * 2.4,
+  );
+  const horizonWarmth = Math.max(sunrise, sunset);
+  weatherVisuals.sunCore.material.color.setRGB(1, 0.985 - horizonWarmth * 0.08, 0.92 - horizonWarmth * 0.18);
+  weatherVisuals.sunHalo.material.color.setRGB(1, 0.9 - horizonWarmth * 0.1, 0.76 - horizonWarmth * 0.12);
+
+  const lunarClock = state.dayTime < 0.5 ? state.dayTime + 1 : state.dayTime;
+  const moonTravel = THREE.MathUtils.clamp((lunarClock - 0.77) / 0.48, 0, 1);
+  const moonWindow = smoothstep(0.77, 0.825, lunarClock) * (1 - smoothstep(1.195, 1.25, lunarClock));
+  const moonArcHeight = 1.4 + Math.sin(moonTravel * Math.PI) * 9.5;
+  weatherVisuals.moon.position.set(-25 + moonTravel * 50, moonArcHeight, -44);
+  moonLight.position.set(weatherVisuals.moon.position.x * 0.42, Math.max(7, moonArcHeight), -18);
+  updateMoonPhaseTexture(weatherVisuals.moonPhaseTexture, state.lunarPhase);
+  const illuminatedMoon = (1 - Math.cos(state.lunarPhase * Math.PI * 2)) * 0.5;
+  const moonOpacity = THREE.MathUtils.clamp(
+    moonWindow * (0.72 + night * 0.22) - (rainy ? 0.22 : 0),
+    0,
+    0.9,
+  );
   weatherVisuals.moonCore.material.opacity = THREE.MathUtils.lerp(weatherVisuals.moonCore.material.opacity, moonOpacity, dt * 2.6);
-  weatherVisuals.moonHalo.material.opacity = THREE.MathUtils.lerp(weatherVisuals.moonHalo.material.opacity, moonOpacity * 0.48, dt * 2.2);
+  weatherVisuals.moonHalo.material.opacity = THREE.MathUtils.lerp(
+    weatherVisuals.moonHalo.material.opacity,
+    moonOpacity * (0.06 + illuminatedMoon * 0.28),
+    dt * 2.2,
+  );
   const moonPulse = 1 + Math.sin(elapsed * 0.8) * 0.035;
   weatherVisuals.moon.scale.set(moonPulse, moonPulse, moonPulse);
 
@@ -6199,9 +7150,21 @@ function dayPhaseLabel() {
 
 function updateMarineLife(dt, elapsed, waterLevel) {
   for (const item of marineLife) {
+    item.reactionTimer -= dt;
+    if (item.reactionTimer <= 0) {
+      updateMarineReactionTarget(item, waterLevel);
+      item.reactionTimer = 0.8 + Math.random() * 1.4;
+    }
+    item.center.lerp(item.targetCenter, 1 - Math.exp(-dt * (item.kind === "crab" ? 0.52 : 0.34)));
+    const targetCuriosity = item.targetCenter.distanceToSquared(item.home) > 0.4 ? 1 : 0;
+    item.curiosity = THREE.MathUtils.lerp(item.curiosity, targetCuriosity, dt * 1.8);
+
     const oldX = item.group.position.x;
     const oldZ = item.group.position.z;
-    item.phase += dt * item.speed * (state.weather === "rainy" ? 1.12 : 1);
+    const tideActivity = item.kind === "crab"
+      ? 0.76 + Math.abs(state.tideRise - 0.5) * 0.62
+      : 0.78 + state.tideRise * 0.48;
+    item.phase += dt * item.speed * tideActivity * (1 + item.curiosity * 0.32) * (state.weather === "rainy" ? 1.12 : 1);
 
     const wander = Math.sin(item.phase * 1.7 + item.seed) * 0.28;
     const x = item.center.x + Math.cos(item.phase) * item.radiusX + wander;
@@ -6233,6 +7196,114 @@ function updateMarineLife(dt, elapsed, waterLevel) {
       if (child.userData.leg) child.rotation.y = Math.sin(elapsed * 9 + child.userData.leg) * 0.2;
     });
   }
+}
+
+function updateLargeMarineLife(dt, elapsed, waterLevel) {
+  if (largeMarineEvent.active && elapsed - largeMarineEvent.startedAt >= largeMarineEvent.duration) {
+    largeMarineEvent.active.creature.visible = false;
+    largeMarineEvent.active.splash.visible = false;
+    largeMarineEvent.active = null;
+    largeMarineEvent.nextAt = elapsed + 18 + Math.random() * 22;
+  }
+
+  if (!largeMarineEvent.active && elapsed >= largeMarineEvent.nextAt) {
+    const preferWhale = Math.random() < 0.3;
+    const candidates = largeMarineLife.filter((item) => item.kind === (preferWhale ? "whale" : "dolphin"));
+    const selected = candidates[Math.floor(Math.random() * candidates.length)];
+    if (selected) {
+      largeMarineEvent.active = selected;
+      largeMarineEvent.startedAt = elapsed;
+      largeMarineEvent.duration = selected.kind === "whale" ? 4.8 : 2.7;
+    }
+  }
+
+  for (const item of largeMarineLife) {
+    const angle = item.angleOffset + elapsed * item.orbitSpeed;
+    const x = Math.cos(angle) * item.orbitRadius;
+    const z = Math.sin(angle) * item.orbitRadius * item.orbitFlattening;
+    const dx = -Math.sin(angle) * item.orbitRadius;
+    const dz = Math.cos(angle) * item.orbitRadius * item.orbitFlattening;
+    item.root.position.set(x, waterLevel, z);
+    item.root.rotation.y = Math.atan2(-dz, dx);
+
+    const tailSpeed = item.kind === "whale" ? 2.8 : item.kind === "dolphin" ? 5.2 : 3.8;
+    const tailAmount = item.kind === "whale" ? 0.2 : item.kind === "dolphin" ? 0.3 : 0.38;
+    item.creature.traverse((child) => {
+      if (!child.userData.tail) return;
+      const tailMotion = Math.sin(elapsed * tailSpeed + item.seed) * tailAmount;
+      if (child.userData.tailMotion === "pitch") child.rotation.z = tailMotion;
+      else child.rotation.y = tailMotion;
+    });
+
+    if (item.kind === "shark") {
+      item.creature.visible = true;
+      item.creature.position.y = -0.24 + Math.sin(elapsed * 0.9 + item.seed) * 0.055;
+      item.creature.rotation.z = Math.sin(elapsed * 0.7 + item.seed) * 0.035;
+      continue;
+    }
+
+    const active = largeMarineEvent.active === item;
+    item.creature.visible = active;
+    item.splash.visible = active;
+    if (!active) continue;
+
+    const jump = THREE.MathUtils.clamp(
+      (elapsed - largeMarineEvent.startedAt) / largeMarineEvent.duration,
+      0,
+      1,
+    );
+    const arc = Math.sin(jump * Math.PI);
+    const isWhale = item.kind === "whale";
+    item.creature.position.y = (isWhale ? -0.68 : -0.36) + arc * (isWhale ? 1.72 : 1.22);
+    item.creature.rotation.z = (0.5 - jump) * (isWhale ? 0.72 : 0.92);
+    item.creature.rotation.x = Math.sin(jump * Math.PI) * Math.sin(item.seed) * (isWhale ? 0.08 : 0.16);
+
+    const splashStrength = Math.min(1, Math.exp(-jump * 18) + Math.exp(-(1 - jump) * 18));
+    item.splash.userData.rings.forEach((ring, index) => {
+      ring.material.opacity = splashStrength * (index === 0 ? 0.68 : 0.42);
+      const spread = 1 + Math.min(jump, 1 - jump) * (index === 0 ? 3.2 : 4.6);
+      ring.scale.setScalar(spread);
+      ring.rotation.z = elapsed * (index === 0 ? 0.08 : -0.06) + item.seed;
+    });
+  }
+}
+
+function updateMarineReactionTarget(item, waterLevel) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const build of buildObjects) {
+    if (build.collapse > 0.72) continue;
+    const shorelineGap = waterLevel - build.baseY;
+    const isInteresting = item.kind === "crab"
+      ? shorelineGap > -0.32 && shorelineGap < 0.42
+      : shorelineGap > -0.14;
+    if (!isInteresting) continue;
+    const distance = Math.hypot(build.group.position.x - item.home.x, build.group.position.z - item.home.y);
+    if (distance < nearestDistance) {
+      nearest = build;
+      nearestDistance = distance;
+    }
+  }
+
+  if (!nearest || (state.tideRise < 0.22 && item.kind !== "crab")) {
+    item.targetCenter.copy(item.home);
+    return;
+  }
+
+  const outward = new THREE.Vector2(nearest.group.position.x, nearest.group.position.z);
+  if (outward.lengthSq() < 0.1) outward.set(item.home.x, item.home.y);
+  if (outward.lengthSq() < 0.1) outward.set(1, 0);
+  outward.normalize();
+  const offset = (nearest.group.userData.baseRadius ?? 0.8) + (item.kind === "crab" ? 0.42 : 0.86);
+  const targetX = nearest.group.position.x + outward.x * offset;
+  const targetZ = nearest.group.position.z + outward.y * offset;
+  const targetTerrain = sampleHeight(targetX, targetZ);
+
+  if (item.kind !== "crab" && waterLevel <= targetTerrain + 0.08) {
+    item.targetCenter.copy(item.home);
+    return;
+  }
+  item.targetCenter.set(targetX, targetZ);
 }
 
 function updateFloodProtection(dt) {
@@ -6364,19 +7435,50 @@ function updatePerson(item, dt, elapsed, waterLevel) {
   item.panic = THREE.MathUtils.lerp(item.panic, waterThreat > -0.05 ? 1 : 0, dt * 3);
 
   if (item.panic > 0.25) {
+    item.behavior = "panic";
+    item.interestBuild = null;
+    item.visitTimer = 0;
     item.target.copy(findSaferPersonTarget(group.position));
   } else {
-    item.retargetAt -= dt;
-    if (item.retargetAt <= 0 || horizontalDistance(group.position, item.target) < 0.35) {
-      item.target.copy(pickPersonTarget(group.position));
-      item.retargetAt = 2.2 + Math.random() * 3.4;
+    item.visitCooldown = Math.max(0, item.visitCooldown - dt);
+    if (item.behavior === "panic") item.behavior = "wander";
+
+    if (item.behavior === "admire" || item.behavior === "photo") {
+      item.visitTimer -= dt;
+      if (!item.interestBuild || !roots.builds.children.includes(item.interestBuild.group)) {
+        finishPersonVisit(item);
+      } else if (item.visitTimer <= 0) {
+        if (item.behavior === "admire") {
+          item.behavior = "photo";
+          item.visitTimer = 1.2 + Math.random() * 0.9;
+        } else {
+          finishPersonVisit(item);
+        }
+      }
+    } else if (item.behavior === "approach") {
+      if (!item.interestBuild || !roots.builds.children.includes(item.interestBuild.group)) {
+        finishPersonVisit(item);
+      } else if (horizontalDistance(group.position, item.target) < 0.36) {
+        item.behavior = "admire";
+        item.visitTimer = 1.5 + Math.random() * 1.8;
+        item.velocity.multiplyScalar(0.2);
+      }
+    } else {
+      item.retargetAt -= dt;
+      if (item.visitCooldown <= 0 && tryAssignPersonVisit(item)) {
+        item.behavior = "approach";
+      } else if (item.retargetAt <= 0 || horizontalDistance(group.position, item.target) < 0.35) {
+        item.target.copy(pickPersonTarget(group.position));
+        item.retargetAt = 2.2 + Math.random() * 3.4;
+      }
     }
   }
 
+  const isObserving = item.behavior === "admire" || item.behavior === "photo";
   const desired = new THREE.Vector3(item.target.x - group.position.x, 0, item.target.z - group.position.z);
   const distance = desired.length();
   if (distance > 0.02) desired.normalize();
-  const speed = item.panic > 0.25 ? 2.5 : 0.58;
+  const speed = item.panic > 0.25 ? 2.5 : item.behavior === "approach" ? 0.72 : isObserving ? 0 : 0.58;
   item.velocity.lerp(desired.multiplyScalar(speed), dt * (item.panic > 0.25 ? 5 : 1.5));
 
   const nextX = group.position.x + item.velocity.x * dt;
@@ -6390,19 +7492,73 @@ function updatePerson(item, dt, elapsed, waterLevel) {
   }
 
   group.position.y = THREE.MathUtils.lerp(group.position.y, sampleHeight(group.position.x, group.position.z) + 0.02, dt * 8);
-  if (item.velocity.lengthSq() > 0.002) {
+  if (isObserving && item.interestBuild) {
+    const lookX = item.interestBuild.group.position.x - group.position.x;
+    const lookZ = item.interestBuild.group.position.z - group.position.z;
+    group.rotation.y = Math.atan2(lookX, lookZ);
+  } else if (item.velocity.lengthSq() > 0.002) {
     group.rotation.y = Math.atan2(item.velocity.x, item.velocity.z);
   }
 
-  const step = Math.sin(elapsed * (item.panic > 0.25 ? 12 : 6) + item.bob);
+  const step = isObserving ? 0 : Math.sin(elapsed * (item.panic > 0.25 ? 12 : 6) + item.bob);
   group.position.y += Math.abs(step) * (item.panic > 0.25 ? 0.035 : 0.018);
   for (const leg of group.userData.legs ?? []) {
     leg.rotation.x = step * 0.55 * leg.userData.legSide;
   }
   for (const arm of group.userData.arms ?? []) {
-    arm.rotation.x = -step * 0.48 * arm.userData.armSide;
-    arm.rotation.z = arm.userData.armSide * (0.34 + item.panic * 0.12);
+    if (item.behavior === "photo") {
+      arm.rotation.x = -1.18;
+      arm.rotation.z = arm.userData.armSide * 0.11;
+    } else {
+      arm.rotation.x = -step * 0.48 * arm.userData.armSide;
+      arm.rotation.z = arm.userData.armSide * (0.34 + item.panic * 0.12);
+    }
   }
+
+  const camera = group.userData.camera;
+  if (camera) camera.visible = item.behavior === "photo";
+  const flash = group.userData.cameraFlash;
+  if (flash) {
+    const flashPulse = item.behavior === "photo" && item.visitTimer < 0.32
+      ? Math.sin((0.32 - item.visitTimer) * Math.PI / 0.32)
+      : 0;
+    flash.material.opacity = Math.max(0, flashPulse) * 0.92;
+    flash.scale.setScalar(0.02 + Math.max(0, flashPulse) * 0.34);
+  }
+}
+
+function tryAssignPersonVisit(item) {
+  const candidates = buildObjects.filter((build) => (
+    build.collapse < 0.55
+    && build.stability > 0.42
+    && horizontalDistance(item.group.position, build.group.position) < 10
+  ));
+  if (!candidates.length) return false;
+  candidates.sort((a, b) => horizontalDistance(item.group.position, a.group.position) - horizontalDistance(item.group.position, b.group.position));
+
+  for (const build of candidates.slice(0, 5).sort(() => Math.random() - 0.5)) {
+    const angle = Math.atan2(item.group.position.z - build.group.position.z, item.group.position.x - build.group.position.x)
+      + (Math.random() - 0.5) * 0.9;
+    const distance = (build.group.userData.baseRadius ?? 0.8) + 0.78 + Math.random() * 0.42;
+    const x = build.group.position.x + Math.cos(angle) * distance;
+    const z = build.group.position.z + Math.sin(angle) * distance;
+    if (!isPersonWalkable(x, z, ocean.water.position.y)) continue;
+    item.interestBuild = build;
+    item.target.set(x, sampleHeight(x, z), z);
+    item.retargetAt = 8;
+    return true;
+  }
+  item.visitCooldown = 2 + Math.random() * 2;
+  return false;
+}
+
+function finishPersonVisit(item) {
+  item.behavior = "wander";
+  item.interestBuild = null;
+  item.visitTimer = 0;
+  item.visitCooldown = 4 + Math.random() * 6;
+  item.target.copy(pickPersonTarget(item.group.position));
+  item.retargetAt = 2.2 + Math.random() * 2.8;
 }
 
 function pickPersonTarget(origin) {
@@ -6441,7 +7597,11 @@ function findSaferPersonTarget(origin) {
 
 function isPersonWalkable(x, z, waterLevel) {
   const radial = Math.sqrt((x / 19) ** 2 + (z / 14.5) ** 2);
-  return radial < 1.08 && sampleHeight(x, z) > waterLevel - 0.05;
+  if (radial >= 1.08 || sampleHeight(x, z) <= waterLevel - 0.05) return false;
+  return buildObjects.every((build) => {
+    const clearance = Math.max(0.42, (build.group.userData.baseRadius ?? 0.8) * 0.58);
+    return Math.hypot(x - build.group.position.x, z - build.group.position.z) > clearance;
+  });
 }
 
 function updateSandPuffs(dt) {
