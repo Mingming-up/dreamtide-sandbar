@@ -6,7 +6,13 @@ const worker = `const app = {
     if (url.pathname === "/game") {
       return Response.redirect(new URL("/game/", url), 308);
     }
-    return env.ASSETS.fetch(request);
+    const response = await env.ASSETS.fetch(request);
+    const headers = new Headers(response.headers);
+    headers.set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'");
+    headers.set("Permissions-Policy", "camera=(), geolocation=(), microphone=()");
+    headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   },
 };
 

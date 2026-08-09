@@ -1,9 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import kfcPrimaryLogoUrl from "./assets/kfc-primary-logo.png";
+import { MAX_SAVE_FILE_SIZE, validateSaveData } from "./saveValidation.js";
 import "./styles.css";
 
 const app = document.querySelector("#app");
@@ -49,8 +48,53 @@ const state = {
   buildCount: 0,
 };
 
+const QUALITY_SETTING_KEY = "dream-sandbar-quality-preset";
+const QUALITY_PROFILES = {
+  low: {
+    label: "低",
+    pixelRatio: 1,
+    shadowSize: 1024,
+    waterSegments: 64,
+    waterFps: 15,
+    waterNormalFps: 5,
+    marineCounts: { fish: 8, shrimp: 3, crab: 3, whale: 1, dolphin: 2, shark: 1 },
+    particleScale: 0.45,
+  },
+  medium: {
+    label: "中",
+    pixelRatio: 1.5,
+    shadowSize: 2048,
+    waterSegments: 96,
+    waterFps: 24,
+    waterNormalFps: 10,
+    marineCounts: { fish: 13, shrimp: 6, crab: 5, whale: 1, dolphin: 3, shark: 2 },
+    particleScale: 0.72,
+  },
+  high: {
+    label: "高",
+    pixelRatio: 2,
+    shadowSize: 4096,
+    waterSegments: 140,
+    waterFps: 30,
+    waterNormalFps: 15,
+    marineCounts: { fish: 18, shrimp: 8, crab: 7, whale: 2, dolphin: 4, shark: 2 },
+    particleScale: 1,
+  },
+};
+const qualitySystem = {
+  selected: "auto",
+  active: "medium",
+  waterFps: QUALITY_PROFILES.medium.waterFps,
+  waterNormalFps: QUALITY_PROFILES.medium.waterNormalFps,
+  particleScale: QUALITY_PROFILES.medium.particleScale,
+  rainCount: 520,
+  foamCount: 420,
+  starCount: 220,
+  sparkleCount: 180,
+};
+
 const ui = createUi();
-app.append(ui.shell, ui.bubbleMenu, ui.bubbleItems, ui.hud, ui.tools, ui.saves, ui.soundButton, ui.tideAlert, ui.toast);
+app.append(ui.shell, ui.bubbleMenu, ui.bubbleItems, ui.hud, ui.tools, ui.saves, ui.quality, ui.saveConfirmDialog, ui.soundButton, ui.tideAlert, ui.toast);
 
 const scene = new THREE.Scene();
 const skyGradient = createSkyGradientTexture();
@@ -65,9 +109,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
-const carPmremGenerator = new THREE.PMREMGenerator(renderer);
-const carEnvironmentMap = carPmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-carPmremGenerator.dispose();
+let carEnvironmentMap = null;
 ui.shell.appendChild(renderer.domElement);
 renderer.domElement.className = "game-canvas";
 
@@ -97,10 +139,9 @@ const moonLight = new THREE.PointLight(0xc7dcff, 0, 58, 1.45);
 moonLight.position.set(18, 18, -22);
 scene.add(moonLight);
 
-const carModelLoader = new GLTFLoader();
 const pendingCarGroups = new Set();
 let carModelTemplate = null;
-loadHighFidelityCarModel();
+let carModelLoading = false;
 
 const materials = {
   sand: new THREE.MeshStandardMaterial({ color: 0xe8c78e, roughness: 0.92, metalness: 0.02 }),
@@ -257,9 +298,15 @@ const marineLife = [];
 const largeMarineLife = [];
 const largeMarineEvent = {
   active: null,
+  members: [],
   startedAt: 0,
   duration: 0,
   nextAt: 12,
+  followCamera: false,
+};
+const marineEcology = {
+  scanElapsed: 0,
+  scanInterval: 0.28,
 };
 addScenery();
 
@@ -310,14 +357,18 @@ const SAVE_AUTOSAVE_KEY = "dream-sandbar-autosave-enabled";
 const saveSystem = {
   activeSlot: 1,
   autosaveTimer: 0,
+  statusTimer: 0,
   autosaveEnabled: false,
   dirty: false,
   restoring: false,
   restoredOnStart: false,
+  pendingDeleteSlot: null,
+  deleteDialogTrigger: null,
 };
 const AUDIO_MUTED_KEY = "dream-sandbar-audio-muted";
 const audioSystem = createAudioSystem();
 const clock = new THREE.Clock();
+let animationFrameId = 0;
 let uiUpdateElapsed = 0;
 let erosionUpdateElapsed = 0;
 let floodProtectionElapsed = 1;
@@ -349,16 +400,24 @@ const tideGameplay = {
   criticalBuilds: 0,
 };
 
+initializeQualitySettings();
 initializeSaveSystem();
 if (!saveSystem.restoredOnStart) showToast("浏览沙洲，选择模具后再点击沙滩建造。");
 
 window.addEventListener("pointerdown", unlockAudio, { once: true, capture: true });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    animationFrameId = 0;
+    clock.stop();
     Object.values(audioSystem.tracks).forEach((track) => track.pause());
-  } else if (audioSystem.unlocked && !audioSystem.muted) {
-    startAmbientTracks();
+    return;
   }
+  const elapsed = clock.elapsedTime;
+  clock.start();
+  clock.elapsedTime = elapsed;
+  if (!animationFrameId) animationFrameId = requestAnimationFrame(animate);
+  if (audioSystem.unlocked && !audioSystem.muted) startAmbientTracks();
 });
 
 window.addEventListener("resize", onResize);
@@ -427,6 +486,9 @@ ui.pauseTimeButton.addEventListener("click", () => {
   scheduleAutoSave();
 });
 ui.soundButton.addEventListener("click", toggleAudio);
+ui.qualityButtons.forEach((button) => {
+  button.addEventListener("click", () => selectQualityPreset(button.dataset.qualityPreset));
+});
 ui.saveSlotLoadButtons.forEach((button) => {
   button.addEventListener("click", () => loadSaveSlot(Number(button.dataset.loadSlot)));
 });
@@ -434,9 +496,23 @@ ui.saveSlotWriteButtons.forEach((button) => {
   button.addEventListener("click", () => saveToSlot(Number(button.dataset.writeSlot), true));
 });
 ui.saveSlotDeleteButtons.forEach((button) => {
-  button.addEventListener("click", () => deleteSaveSlot(Number(button.dataset.deleteSlot)));
+  button.addEventListener("click", () => openDeleteSaveDialog(Number(button.dataset.deleteSlot), button));
+});
+ui.saveSlotRenameButtons.forEach((button) => {
+  button.addEventListener("click", () => renameSaveSlot(Number(button.dataset.renameSlot)));
 });
 ui.autosaveToggle.addEventListener("click", toggleAutoSave);
+ui.saveConfirmCancelButtons.forEach((button) => button.addEventListener("click", () => closeDeleteSaveDialog()));
+ui.saveConfirmButton.addEventListener("click", confirmDeleteSaveSlot);
+ui.saveConfirmDialog.addEventListener("click", (event) => {
+  if (event.target === ui.saveConfirmDialog) closeDeleteSaveDialog();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || ui.saveConfirmDialog.hidden) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  closeDeleteSaveDialog();
+}, true);
 ui.exportSaveButton.addEventListener("click", exportActiveSave);
 ui.importSaveButton.addEventListener("click", () => ui.saveFileInput.click());
 ui.saveFileInput.addEventListener("change", importSaveFile);
@@ -497,6 +573,11 @@ function createUi() {
       <li role="none">
         <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="saves" aria-label="存档" style="--item-index: 3; --glass-gradient: linear-gradient(145deg, #c793ff 0%, #8c5de8 56%, #5b3db2 100%); --glass-glow: rgba(126, 80, 218, .32);">
           <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5zM8 4v6h8V4M8 17h8M9 7h5"/></svg></span></span><span class="glass-icon-label">存档</span>
+        </button>
+      </li>
+      <li role="none">
+        <button class="glass-icon-btn" type="button" role="menuitem" data-panel-target="quality" aria-label="画质" style="--item-index: 4; --glass-gradient: linear-gradient(145deg, #7de1d1 0%, #3f9eae 56%, #28637d 100%); --glass-glow: rgba(63, 158, 174, .32);">
+          <span class="glass-icon-back"></span><span class="glass-icon-front"><span class="glass-icon-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M6 12h12M9 17h6M7 5v4M15 10v4M12 15v4"/></svg></span></span><span class="glass-icon-label">画质</span>
         </button>
       </li>
     </ul>
@@ -604,7 +685,10 @@ function createUi() {
           <span class="autosave-toggle-dot" aria-hidden="true"></span>
           <span data-autosave-label>自动存档：关</span>
         </button>
-        <small class="autosave-state" data-autosave-state>仅手动保存</small>
+        <small class="autosave-state" data-save-state="unsaved" role="status" aria-live="polite">
+          <span class="save-state-dot" aria-hidden="true"></span>
+          <span data-autosave-state>未保存</span>
+        </small>
       </div>
     </div>
     <div class="save-slot-list">
@@ -612,10 +696,17 @@ function createUi() {
         <article class="save-slot" data-save-slot="${slot}">
           <button class="save-slot-load" type="button" data-load-slot="${slot}">
             <span class="save-slot-number">0${slot}</span>
-            <span class="save-slot-copy"><strong>存档 ${slot}</strong><small data-slot-meta="${slot}">空存档位</small></span>
+            <span class="save-slot-thumbnail" aria-hidden="true">
+              <img data-slot-thumbnail="${slot}" alt="" hidden>
+              <span data-slot-placeholder="${slot}">◇</span>
+            </span>
+            <span class="save-slot-copy"><strong data-slot-name="${slot}">存档 ${slot}</strong><small data-slot-meta="${slot}">空存档位</small></span>
           </button>
-          <button class="save-slot-write" type="button" data-write-slot="${slot}">保存</button>
-          <button class="save-slot-delete" type="button" data-delete-slot="${slot}" aria-label="删除存档 ${slot}">删除</button>
+          <div class="save-slot-actions">
+            <button class="save-slot-write" type="button" data-write-slot="${slot}">保存</button>
+            <button class="save-slot-rename" type="button" data-rename-slot="${slot}" aria-label="重命名存档 ${slot}">改名</button>
+            <button class="save-slot-delete" type="button" data-delete-slot="${slot}" aria-label="删除存档 ${slot}">删除</button>
+          </div>
         </article>
       `).join("")}
     </div>
@@ -628,10 +719,60 @@ function createUi() {
     <p class="hint-note save-note">开启自动存档后，编辑会写入当前存档位；关闭时请手动保存。</p>
   `;
 
+  const saveConfirmDialog = document.createElement("div");
+  saveConfirmDialog.className = "save-confirm-backdrop";
+  saveConfirmDialog.dataset.saveConfirm = "";
+  saveConfirmDialog.hidden = true;
+  saveConfirmDialog.innerHTML = `
+    <section class="save-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-confirm-title" aria-describedby="save-confirm-message">
+      <button class="save-confirm-close" type="button" data-save-confirm-cancel aria-label="关闭删除确认">×</button>
+      <span class="save-confirm-icon" aria-hidden="true">!</span>
+      <p class="eyebrow">Delete archive</p>
+      <h2 id="save-confirm-title" data-save-confirm-title>删除这个存档？</h2>
+      <p id="save-confirm-message" class="save-confirm-message" data-save-confirm-message>删除后无法撤销。</p>
+      <div class="save-confirm-summary">
+        <span class="save-confirm-thumbnail" aria-hidden="true">
+          <img data-save-confirm-thumbnail alt="" hidden>
+          <span data-save-confirm-placeholder>◇</span>
+        </span>
+        <span><strong data-save-confirm-name>存档</strong><small data-save-confirm-meta>已保存</small></span>
+      </div>
+      <div class="save-confirm-actions">
+        <button type="button" data-save-confirm-cancel>取消</button>
+        <button class="save-confirm-danger" type="button" data-save-confirm-submit>确认删除</button>
+      </div>
+    </section>
+  `;
+
+  const quality = document.createElement("section");
+  quality.className = "hint-panel quality-panel ui-card";
+  quality.dataset.spotlightCard = "";
+  quality.innerHTML = `
+    <button class="panel-collapse" type="button" aria-label="返回界面菜单">−</button>
+    <div class="hint-heading quality-heading">
+      <span class="hint-symbol quality-symbol" aria-hidden="true">◉</span>
+      <div><p class="eyebrow">Render profile</p><strong>画质与性能</strong></div>
+      <span class="quality-active" data-quality-active>自动 · 中</span>
+    </div>
+    <div class="quality-preset-grid" role="group" aria-label="画质档位">
+      <button type="button" data-quality-preset="auto" aria-pressed="true">自动</button>
+      <button type="button" data-quality-preset="low" aria-pressed="false">低</button>
+      <button type="button" data-quality-preset="medium" aria-pressed="false">中</button>
+      <button type="button" data-quality-preset="high" aria-pressed="false">高</button>
+    </div>
+    <div class="quality-metrics">
+      <div><span>阴影</span><strong data-quality-metric="shadow">2048</strong></div>
+      <div><span>海水</span><strong data-quality-metric="water">96 · 24fps</strong></div>
+      <div><span>动物</span><strong data-quality-metric="animals">25 只</strong></div>
+      <div><span>粒子</span><strong data-quality-metric="particles">72%</strong></div>
+    </div>
+    <p class="hint-note quality-note">自动档会根据设备性能选择实际画质，手动选择后会记住设置。</p>
+  `;
+
   const titlePanel = hud.querySelector(".title-panel");
   const statusPanel = hud.querySelector(".status-panel");
-  [titlePanel, statusPanel, tools, saves].forEach(enhanceSpotlightCard);
-  const panels = { title: titlePanel, status: statusPanel, tools, saves };
+  [titlePanel, statusPanel, tools, saves, quality].forEach(enhanceSpotlightCard);
+  const panels = { title: titlePanel, status: statusPanel, tools, saves, quality };
   Object.values(panels).forEach((panel) => panel.classList.add("collapsed"));
 
   const menuButton = bubbleMenu.querySelector(".menu-btn");
@@ -667,6 +808,7 @@ function createUi() {
   hud.querySelectorAll(".panel-collapse").forEach((button) => button.addEventListener("click", returnToMenu));
   tools.querySelector(".panel-collapse").addEventListener("click", returnToMenu);
   saves.querySelector(".panel-collapse").addEventListener("click", returnToMenu);
+  quality.querySelector(".panel-collapse").addEventListener("click", returnToMenu);
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     setMenuOpen(false);
@@ -695,6 +837,8 @@ function createUi() {
     hud,
     tools,
     saves,
+    quality,
+    saveConfirmDialog,
     soundButton,
     tideAlert,
     toast,
@@ -719,10 +863,26 @@ function createUi() {
     saveSlotCards: [...saves.querySelectorAll("[data-save-slot]")],
     saveSlotLoadButtons: [...saves.querySelectorAll("[data-load-slot]")],
     saveSlotWriteButtons: [...saves.querySelectorAll("[data-write-slot]")],
+    saveSlotRenameButtons: [...saves.querySelectorAll("[data-rename-slot]")],
     saveSlotDeleteButtons: [...saves.querySelectorAll("[data-delete-slot]")],
+    saveSlotNames: [...saves.querySelectorAll("[data-slot-name]")],
     saveSlotMeta: [...saves.querySelectorAll("[data-slot-meta]")],
+    saveSlotThumbnails: [...saves.querySelectorAll("[data-slot-thumbnail]")],
+    saveSlotPlaceholders: [...saves.querySelectorAll("[data-slot-placeholder]")],
+    saveConfirmCancelButtons: [...saveConfirmDialog.querySelectorAll("[data-save-confirm-cancel]")],
+    saveConfirmButton: saveConfirmDialog.querySelector("[data-save-confirm-submit]"),
+    saveConfirmTitle: saveConfirmDialog.querySelector("[data-save-confirm-title]"),
+    saveConfirmMessage: saveConfirmDialog.querySelector("[data-save-confirm-message]"),
+    saveConfirmName: saveConfirmDialog.querySelector("[data-save-confirm-name]"),
+    saveConfirmMeta: saveConfirmDialog.querySelector("[data-save-confirm-meta]"),
+    saveConfirmThumbnail: saveConfirmDialog.querySelector("[data-save-confirm-thumbnail]"),
+    saveConfirmPlaceholder: saveConfirmDialog.querySelector("[data-save-confirm-placeholder]"),
+    qualityButtons: [...quality.querySelectorAll("[data-quality-preset]")],
+    qualityActive: quality.querySelector("[data-quality-active]"),
+    qualityMetrics: Object.fromEntries([...quality.querySelectorAll("[data-quality-metric]")].map((item) => [item.dataset.qualityMetric, item])),
     autosaveToggle: saves.querySelector("[data-autosave-toggle]"),
     autosaveLabel: saves.querySelector("[data-autosave-label]"),
+    saveStateIndicator: saves.querySelector("[data-save-state]"),
     autosaveState: saves.querySelector("[data-autosave-state]"),
     exportSaveButton: saves.querySelector('[data-save-action="export"]'),
     importSaveButton: saves.querySelector('[data-save-action="import"]'),
@@ -949,6 +1109,113 @@ function updateUndoButton() {
   ui.redoButton.disabled = redoStack.length === 0;
 }
 
+function initializeQualitySettings() {
+  const stored = readStorageValue(QUALITY_SETTING_KEY);
+  qualitySystem.selected = ["auto", "low", "medium", "high"].includes(stored) ? stored : "auto";
+  applyQualityPreset(qualitySystem.selected, false);
+}
+
+function detectQualityPreset() {
+  const cores = navigator.hardwareConcurrency || 4;
+  const memory = navigator.deviceMemory || 4;
+  if (cores <= 4 || memory <= 3) return "low";
+  if (cores >= 8 && memory >= 8 && window.devicePixelRatio >= 1.5) return "high";
+  return "medium";
+}
+
+function selectQualityPreset(preset) {
+  if (!["auto", "low", "medium", "high"].includes(preset)) return;
+  qualitySystem.selected = preset;
+  try {
+    window.localStorage.setItem(QUALITY_SETTING_KEY, preset);
+  } catch (error) {
+    console.warn("无法记录画质设置：", error);
+  }
+  applyQualityPreset(preset, true);
+}
+
+function applyQualityPreset(preset, showMessage) {
+  const activePreset = preset === "auto" ? detectQualityPreset() : preset;
+  const profile = QUALITY_PROFILES[activePreset];
+  qualitySystem.active = activePreset;
+  qualitySystem.waterFps = profile.waterFps;
+  qualitySystem.waterNormalFps = profile.waterNormalFps;
+  qualitySystem.particleScale = profile.particleScale;
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, profile.pixelRatio));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  const maxShadowSize = renderer.capabilities.maxTextureSize || 4096;
+  const shadowSize = Math.min(profile.shadowSize, maxShadowSize);
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
+  sun.shadow.radius = activePreset === "low" ? 1 : activePreset === "medium" ? 2 : 3;
+  if (sun.shadow.map) {
+    sun.shadow.map.dispose();
+    sun.shadow.map = null;
+  }
+  renderer.shadowMap.needsUpdate = true;
+
+  if (ocean.water.userData.qualitySegments !== profile.waterSegments) {
+    ocean.water.geometry.dispose();
+    ocean.water.geometry = new THREE.PlaneGeometry(1200, 1200, profile.waterSegments, profile.waterSegments);
+    ocean.water.userData.qualitySegments = profile.waterSegments;
+  }
+
+  qualitySystem.foamCount = Math.max(1, Math.round(420 * profile.particleScale));
+  qualitySystem.rainCount = Math.max(1, Math.round(520 * profile.particleScale));
+  qualitySystem.starCount = Math.max(1, Math.round(220 * profile.particleScale));
+  qualitySystem.sparkleCount = Math.max(1, Math.round(180 * profile.particleScale));
+  ocean.foamFlecks.geometry.setDrawRange(0, qualitySystem.foamCount);
+  weatherVisuals.rain.geometry.setDrawRange(0, qualitySystem.rainCount);
+  weatherVisuals.stars.geometry.setDrawRange(0, qualitySystem.starCount);
+  weatherVisuals.sparkles.geometry.setDrawRange(0, qualitySystem.sparkleCount);
+
+  const enabledByKind = new Map();
+  marineLife.forEach((item) => {
+    const index = enabledByKind.get(item.kind) || 0;
+    item.qualityEnabled = index < profile.marineCounts[item.kind];
+    enabledByKind.set(item.kind, index + 1);
+    item.group.visible = item.qualityEnabled;
+  });
+
+  largeMarineEvent.members.forEach((member) => {
+    member.creature.visible = false;
+    if (member.splash) member.splash.visible = false;
+    if (member.spout) member.spout.visible = false;
+  });
+  largeMarineEvent.active = null;
+  largeMarineEvent.members = [];
+  largeMarineEvent.followCamera = false;
+  largeMarineEvent.nextAt = clock.elapsedTime + 5;
+  const largeEnabledByKind = new Map();
+  largeMarineLife.forEach((item) => {
+    const index = largeEnabledByKind.get(item.kind) || 0;
+    item.qualityEnabled = index < profile.marineCounts[item.kind];
+    largeEnabledByKind.set(item.kind, index + 1);
+    item.root.visible = item.qualityEnabled;
+  });
+
+  updateQualityPanel(profile, shadowSize);
+  if (showMessage) {
+    const label = preset === "auto" ? `自动（${profile.label}）` : `${profile.label}画质`;
+    showToast(`已切换为${label}。`);
+  }
+}
+
+function updateQualityPanel(profile, shadowSize) {
+  ui.qualityButtons.forEach((button) => {
+    const active = button.dataset.qualityPreset === qualitySystem.selected;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  ui.qualityActive.textContent = qualitySystem.selected === "auto"
+    ? `自动 · ${profile.label}`
+    : `${profile.label}画质`;
+  ui.qualityMetrics.shadow.textContent = `${shadowSize}`;
+  ui.qualityMetrics.water.textContent = `${profile.waterSegments} · ${profile.waterFps}fps`;
+  ui.qualityMetrics.animals.textContent = `${Object.values(profile.marineCounts).reduce((sum, count) => sum + count, 0)} 只`;
+  ui.qualityMetrics.particles.textContent = `${Math.round(profile.particleScale * 100)}%`;
+}
+
 function initializeSaveSystem() {
   const storedSlot = Number(readStorageValue(SAVE_ACTIVE_SLOT_KEY));
   saveSystem.activeSlot = Number.isInteger(storedSlot) && storedSlot >= 1 && storedSlot <= 3 ? storedSlot : 1;
@@ -956,7 +1223,10 @@ function initializeSaveSystem() {
   updateAutosaveControl();
   refreshSavePanel();
   const save = readSaveSlot(saveSystem.activeSlot);
-  if (!save) return;
+  if (!save) {
+    setSaveStatus("unsaved", `存档 ${saveSystem.activeSlot} 尚未保存`);
+    return;
+  }
   if (restoreIslandFromSave(save)) {
     saveSystem.restoredOnStart = true;
     showToast(`已恢复存档 ${saveSystem.activeSlot}。`);
@@ -977,17 +1247,20 @@ function readSaveSlot(slot) {
   if (!raw) return null;
   try {
     const save = JSON.parse(raw);
-    return save?.format === "dream-sandbar" && save.version === SAVE_VERSION ? save : null;
+    return validateSaveData(save) ? save : null;
   } catch (error) {
     console.warn(`存档 ${slot} 解析失败：`, error);
     return null;
   }
 }
 
-function serializeCurrentIsland() {
+function serializeCurrentIsland(slot = saveSystem.activeSlot) {
+  const previousSave = readSaveSlot(slot);
   return {
     format: "dream-sandbar",
     version: SAVE_VERSION,
+    name: previousSave?.name || `存档 ${slot}`,
+    thumbnail: createSaveThumbnail() || previousSave?.thumbnail || null,
     savedAt: new Date().toISOString(),
     builds: buildObjects
       .filter((item) => item.group.userData.moldType)
@@ -1032,27 +1305,46 @@ function serializeCurrentIsland() {
   };
 }
 
+function createSaveThumbnail() {
+  try {
+    renderer.render(scene, camera);
+    const thumbnail = document.createElement("canvas");
+    thumbnail.width = 160;
+    thumbnail.height = 90;
+    const context = thumbnail.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.drawImage(renderer.domElement, 0, 0, thumbnail.width, thumbnail.height);
+    return thumbnail.toDataURL("image/jpeg", 0.62);
+  } catch (error) {
+    console.warn("无法生成存档缩略图：", error);
+    return null;
+  }
+}
+
 function roundSaveNumber(value) {
   return Math.round((Number(value) || 0) * 10000) / 10000;
 }
 
 function saveToSlot(slot, showMessage = false) {
   if (saveSystem.restoring || slot < 1 || slot > 3) return false;
-  const save = serializeCurrentIsland();
+  setSaveStatus("saving", `正在写入存档 ${slot}`);
+  const save = serializeCurrentIsland(slot);
   try {
     window.localStorage.setItem(`${SAVE_KEY_PREFIX}${slot}`, JSON.stringify(save));
     window.localStorage.setItem(SAVE_ACTIVE_SLOT_KEY, String(slot));
   } catch (error) {
     console.error("存档写入失败：", error);
-    ui.autosaveState.textContent = "保存失败";
+    setSaveStatus("error", "浏览器存储空间不足或不可用");
     showToast("浏览器存储空间不足，请先导出存档备份。");
     return false;
   }
   saveSystem.activeSlot = slot;
   saveSystem.dirty = false;
   clearTimeout(saveSystem.autosaveTimer);
-  ui.autosaveState.textContent = `已保存 · 存档 ${slot}`;
   refreshSavePanel();
+  saveSystem.statusTimer = window.setTimeout(() => {
+    if (!saveSystem.dirty) setSaveStatus("saved", `已写入存档 ${slot}`);
+  }, 420);
   if (showMessage) showToast(`已保存到存档 ${slot}。`);
   return true;
 }
@@ -1061,11 +1353,10 @@ function scheduleAutoSave(delay = 900) {
   if (saveSystem.restoring) return;
   saveSystem.dirty = true;
   clearTimeout(saveSystem.autosaveTimer);
+  setSaveStatus("unsaved", saveSystem.autosaveEnabled ? "等待自动存档" : "自动存档已关闭");
   if (!saveSystem.autosaveEnabled) {
-    ui.autosaveState.textContent = "有未保存修改";
     return;
   }
-  ui.autosaveState.textContent = "等待自动保存…";
   if (delay <= 0) {
     saveToSlot(saveSystem.activeSlot, false);
     return;
@@ -1085,8 +1376,6 @@ function toggleAutoSave() {
   clearTimeout(saveSystem.autosaveTimer);
   updateAutosaveControl();
   if (saveSystem.autosaveEnabled && saveSystem.dirty) scheduleAutoSave(0);
-  else if (saveSystem.autosaveEnabled) ui.autosaveState.textContent = "已开启";
-  else ui.autosaveState.textContent = saveSystem.dirty ? "有未保存修改" : "仅手动保存";
   showToast(saveSystem.autosaveEnabled ? "自动存档已开启。" : "自动存档已关闭，离开前请手动保存。");
 }
 
@@ -1094,7 +1383,20 @@ function updateAutosaveControl() {
   ui.autosaveToggle.classList.toggle("is-enabled", saveSystem.autosaveEnabled);
   ui.autosaveToggle.setAttribute("aria-pressed", String(saveSystem.autosaveEnabled));
   ui.autosaveLabel.textContent = `自动存档：${saveSystem.autosaveEnabled ? "开" : "关"}`;
-  ui.autosaveState.textContent = saveSystem.autosaveEnabled ? "已开启" : "仅手动保存";
+}
+
+function setSaveStatus(status, detail = "") {
+  const labels = {
+    unsaved: "未保存",
+    saving: "正在保存",
+    saved: "保存成功",
+    error: "保存失败",
+  };
+  clearTimeout(saveSystem.statusTimer);
+  saveSystem.statusTimer = 0;
+  ui.saveStateIndicator.dataset.saveState = status;
+  ui.autosaveState.textContent = labels[status] || labels.unsaved;
+  ui.saveStateIndicator.title = detail;
 }
 
 function loadSaveSlot(slot) {
@@ -1121,19 +1423,52 @@ function loadSaveSlot(slot) {
     resetWorldForBlankSave();
     saveSystem.restoring = false;
     saveSystem.dirty = false;
-    ui.autosaveState.textContent = saveSystem.autosaveEnabled ? "已开启" : "仅手动保存";
+    setSaveStatus("unsaved", `存档 ${slot} 尚未保存`);
     showToast(`已切换到空存档 ${slot}。`);
   }
   refreshSavePanel();
 }
 
+function openDeleteSaveDialog(slot, trigger) {
+  const save = readSaveSlot(slot);
+  if (slot < 1 || slot > 3 || !save) return;
+  const deletingActiveSlot = slot === saveSystem.activeSlot;
+  const count = (save.builds?.length ?? 0) + (save.decorations?.length ?? 0);
+  saveSystem.pendingDeleteSlot = slot;
+  saveSystem.deleteDialogTrigger = trigger;
+  ui.saveConfirmTitle.textContent = `删除存档 ${slot}？`;
+  ui.saveConfirmMessage.textContent = deletingActiveSlot
+    ? "这是当前存档。删除后当前沙洲也会恢复为空白状态，且无法撤销。"
+    : "该存档会从浏览器中永久删除，此操作无法撤销。";
+  ui.saveConfirmName.textContent = save.name || `存档 ${slot}`;
+  ui.saveConfirmMeta.textContent = `${formatSaveTime(save.savedAt)} · ${count} 个物体${deletingActiveSlot ? " · 当前存档" : ""}`;
+  if (save.thumbnail) ui.saveConfirmThumbnail.src = save.thumbnail;
+  else ui.saveConfirmThumbnail.removeAttribute("src");
+  ui.saveConfirmThumbnail.hidden = !save.thumbnail;
+  ui.saveConfirmPlaceholder.hidden = Boolean(save.thumbnail);
+  ui.saveConfirmDialog.hidden = false;
+  window.requestAnimationFrame(() => ui.saveConfirmCancelButtons.at(-1)?.focus());
+}
+
+function closeDeleteSaveDialog(restoreFocus = true) {
+  if (ui.saveConfirmDialog.hidden) return;
+  ui.saveConfirmDialog.hidden = true;
+  const trigger = saveSystem.deleteDialogTrigger;
+  saveSystem.pendingDeleteSlot = null;
+  saveSystem.deleteDialogTrigger = null;
+  if (restoreFocus) trigger?.focus();
+}
+
+function confirmDeleteSaveSlot() {
+  const slot = saveSystem.pendingDeleteSlot;
+  if (!Number.isInteger(slot)) return;
+  closeDeleteSaveDialog(false);
+  deleteSaveSlot(slot);
+}
+
 function deleteSaveSlot(slot) {
   if (slot < 1 || slot > 3 || !readSaveSlot(slot)) return;
   const deletingActiveSlot = slot === saveSystem.activeSlot;
-  const message = deletingActiveSlot
-    ? `删除存档 ${slot}？当前沙洲也会恢复为空白状态。`
-    : `删除存档 ${slot}？此操作无法撤销。`;
-  if (!window.confirm(message)) return;
 
   clearTimeout(saveSystem.autosaveTimer);
   try {
@@ -1150,10 +1485,33 @@ function deleteSaveSlot(slot) {
     resetWorldForBlankSave();
     saveSystem.restoring = false;
     saveSystem.dirty = false;
-    ui.autosaveState.textContent = `空存档 · 存档 ${slot}`;
+    setSaveStatus("unsaved", `存档 ${slot} 已删除`);
   }
   refreshSavePanel();
   showToast(`已删除存档 ${slot}。`);
+}
+
+function renameSaveSlot(slot) {
+  const save = readSaveSlot(slot);
+  if (!save) return;
+  const currentName = String(save.name || `存档 ${slot}`).trim();
+  const requestedName = window.prompt(`为存档 ${slot} 输入新名称`, currentName);
+  if (requestedName === null) return;
+  const name = requestedName.trim().slice(0, 20);
+  if (!name) {
+    showToast("存档名称不能为空。");
+    return;
+  }
+  save.name = name;
+  try {
+    window.localStorage.setItem(`${SAVE_KEY_PREFIX}${slot}`, JSON.stringify(save));
+  } catch (error) {
+    console.error("存档重命名失败：", error);
+    showToast("无法保存新名称。");
+    return;
+  }
+  refreshSavePanel();
+  showToast(`存档 ${slot} 已重命名为“${name}”。`);
 }
 
 function restoreIslandFromSave(save) {
@@ -1195,6 +1553,7 @@ function restoreIslandFromSave(save) {
     undoStack.length = 0;
     redoStack.length = 0;
     saveSystem.dirty = false;
+    setSaveStatus("saved", `已载入存档 ${saveSystem.activeSlot}`);
     updateUndoButton();
     updateUi();
     refreshSavePanel();
@@ -1294,9 +1653,19 @@ function refreshSavePanel() {
   for (let slot = 1; slot <= 3; slot += 1) {
     const save = readSaveSlot(slot);
     const card = ui.saveSlotCards.find((item) => Number(item.dataset.saveSlot) === slot);
+    const name = ui.saveSlotNames.find((item) => Number(item.dataset.slotName) === slot);
     const meta = ui.saveSlotMeta.find((item) => Number(item.dataset.slotMeta) === slot);
+    const thumbnail = ui.saveSlotThumbnails.find((item) => Number(item.dataset.slotThumbnail) === slot);
+    const placeholder = ui.saveSlotPlaceholders.find((item) => Number(item.dataset.slotPlaceholder) === slot);
     card?.classList.toggle("is-active", slot === saveSystem.activeSlot);
     card?.classList.toggle("has-save", Boolean(save));
+    if (name) name.textContent = save?.name || `存档 ${slot}`;
+    if (thumbnail) {
+      if (save?.thumbnail) thumbnail.src = save.thumbnail;
+      else thumbnail.removeAttribute("src");
+      thumbnail.hidden = !save?.thumbnail;
+    }
+    if (placeholder) placeholder.hidden = Boolean(save?.thumbnail);
     if (!meta) continue;
     if (!save) {
       meta.textContent = "空存档位";
@@ -1320,7 +1689,7 @@ function formatSaveTime(value) {
 }
 
 function exportActiveSave() {
-  const save = serializeCurrentIsland();
+  const save = serializeCurrentIsland(saveSystem.activeSlot);
   const blob = new Blob([JSON.stringify(save, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1335,13 +1704,15 @@ async function importSaveFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   try {
+    if (file.size > MAX_SAVE_FILE_SIZE) throw new Error("存档文件过大");
     const save = JSON.parse(await file.text());
-    if (save?.format !== "dream-sandbar" || save.version !== SAVE_VERSION) throw new Error("存档格式不匹配");
+    if (!validateSaveData(save)) throw new Error("存档格式不匹配");
     if (!restoreIslandFromSave(save)) throw new Error("存档恢复失败");
     saveToSlot(saveSystem.activeSlot, false);
     showToast(`已导入到存档 ${saveSystem.activeSlot}。`);
   } catch (error) {
     console.error("存档导入失败：", error);
+    setSaveStatus("error", "导入的存档无法保存");
     showToast("无法导入该文件，请选择有效的梦幻沙洲存档。");
   } finally {
     event.target.value = "";
@@ -2164,6 +2535,8 @@ function addMarineItem(item) {
   item.home = item.center.clone();
   item.targetCenter = item.center.clone();
   item.curiosity = 0;
+  item.fleeStrength = 0;
+  item.escapeUntil = 0;
   item.reactionTimer = Math.random() * 1.4;
   roots.scenery.add(item.group);
   marineLife.push(item);
@@ -2456,10 +2829,24 @@ function addLargeMarineLife() {
 function addLargeMarineItem(item) {
   const root = new THREE.Group();
   const splash = item.kind === "shark" ? null : createBreachSplash(item.kind === "whale" ? 1.4 : 0.72);
+  const spout = item.kind === "whale" ? createWhaleSpout() : null;
+  const wake = item.kind === "whale" ? createWhaleWake() : null;
+  const shadow = item.kind === "shark" ? createSharkShadow() : null;
+  if (shadow) root.add(shadow);
+  if (wake) root.add(wake);
   root.add(item.creature);
+  if (spout) item.creature.add(spout);
   if (splash) root.add(splash);
   item.root = root;
   item.splash = splash;
+  item.spout = spout;
+  item.wake = wake;
+  item.shadow = shadow;
+  item.huntTarget = null;
+  item.huntUntil = 0;
+  item.huntBlend = 0;
+  item.huntPoint = new THREE.Vector2();
+  item.huntPointReady = false;
   item.seed = Math.random() * Math.PI * 2;
   item.creature.visible = item.kind === "shark";
   roots.scenery.add(root);
@@ -2715,6 +3102,163 @@ function createBreachSplash(size) {
   }
   group.userData.rings = rings;
   return group;
+}
+
+function createWhaleWake() {
+  const group = new THREE.Group();
+  const rings = [];
+  for (let i = 0; i < 3; i += 1) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 0.82, 48),
+      new THREE.MeshBasicMaterial({
+        color: i === 0 ? 0xe5fbff : 0xa9e9ef,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.035 + i * 0.006;
+    group.add(ring);
+    rings.push(ring);
+  }
+  group.userData.rings = rings;
+  return group;
+}
+
+function createWhaleSpout() {
+  const group = new THREE.Group();
+  group.position.set(0.82, 0.43, 0);
+  group.visible = false;
+
+  const particleCount = 24;
+  const positions = new Float32Array(particleCount * 3);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const texture = createMarineMistTexture();
+  const material = new THREE.PointsMaterial({
+    map: texture,
+    color: 0xdffbff,
+    size: 0.105,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  const droplets = new THREE.Points(geometry, material);
+  group.add(droplets);
+
+  const particles = Array.from({ length: particleCount }, (_, index) => ({
+    phase: index / particleCount,
+    angle: index * 2.39996,
+    drift: 0.7 + ((index * 17) % 11) / 20,
+  }));
+  const mist = [];
+  for (let i = 0; i < 3; i += 1) {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: texture,
+      color: 0xe9fcff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }));
+    sprite.position.set((i - 1) * 0.08, 0.34 + i * 0.14, (1 - i) * 0.035);
+    sprite.scale.setScalar(0.28 + i * 0.08);
+    group.add(sprite);
+    mist.push(sprite);
+  }
+  group.userData.droplets = droplets;
+  group.userData.particles = particles;
+  group.userData.mist = mist;
+  return group;
+}
+
+function createMarineMistTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gradient.addColorStop(0, "rgba(238, 253, 255, 1)");
+  gradient.addColorStop(0.3, "rgba(211, 246, 250, 0.82)");
+  gradient.addColorStop(1, "rgba(184, 233, 241, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createSharkShadow() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  const gradient = context.createRadialGradient(64, 32, 4, 64, 32, 58);
+  gradient.addColorStop(0, "rgba(8, 34, 43, 0.72)");
+  gradient.addColorStop(0.48, "rgba(11, 43, 52, 0.48)");
+  gradient.addColorStop(1, "rgba(14, 52, 60, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.65, 1.02),
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.055;
+  shadow.renderOrder = 3;
+  return shadow;
+}
+
+function updateWhaleSpout(item, jump, elapsed) {
+  const rise = THREE.MathUtils.smoothstep(jump, 0.34, 0.46);
+  const fall = 1 - THREE.MathUtils.smoothstep(jump, 0.66, 0.78);
+  const strength = rise * fall;
+  const spout = item.spout;
+  spout.visible = strength > 0.01;
+  if (!spout.visible) return;
+
+  const droplets = spout.userData.droplets;
+  const positions = droplets.geometry.attributes.position;
+  spout.userData.particles.forEach((particle, index) => {
+    const progress = (jump * 2.7 + particle.phase) % 1;
+    const spread = (0.035 + progress * 0.28) * particle.drift;
+    positions.setXYZ(
+      index,
+      Math.cos(particle.angle) * spread + progress * 0.05,
+      progress * 1.12 - progress * progress * 0.78,
+      Math.sin(particle.angle) * spread,
+    );
+  });
+  positions.needsUpdate = true;
+  droplets.material.opacity = strength * 0.9;
+  droplets.rotation.y = elapsed * 0.35 + item.seed;
+  spout.userData.mist.forEach((sprite, index) => {
+    const flutter = 0.92 + Math.sin(elapsed * 3.2 + index * 1.7 + item.seed) * 0.08;
+    sprite.material.opacity = strength * (0.34 - index * 0.055) * flutter;
+    sprite.position.x = (index - 1) * 0.08 + Math.sin(elapsed * 1.7 + index) * 0.035;
+  });
+}
+
+function updateWhaleWake(item, elapsed) {
+  item.wake.visible = true;
+  item.wake.userData.rings.forEach((ring, index) => {
+    const phase = (elapsed * 0.24 + index / 3 + item.seed * 0.08) % 1;
+    const spread = 0.86 + phase * 3.6;
+    ring.position.x = -0.42 - phase * 1.25;
+    ring.scale.set(spread, spread * 0.64, 1);
+    ring.material.opacity = (1 - phase) ** 1.6 * (0.18 + state.tideRise * 0.05) * qualitySystem.particleScale;
+  });
 }
 
 function createGhost() {
@@ -3157,6 +3701,8 @@ function deleteSelectedBuild() {
 }
 
 function selectMold(id) {
+  const mold = molds.find((item) => item.id === id);
+  if (!mold) return;
   if (state.selected === id) {
     clearSelection();
     return;
@@ -3165,7 +3711,7 @@ function selectMold(id) {
   state.selected = id;
   wallPreview.visible = false;
   snapMarker.visible = false;
-  const mold = molds.find((item) => item.id === id);
+  if (id === "su7") ensureHighFidelityCarModel();
   ui.selectedName.textContent = `当前：${mold.label}`;
   ui.tools.querySelectorAll(".mold-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.mold === id);
@@ -5967,26 +6513,34 @@ function createSquidwardArchGeometry(width, height, depth) {
   return geometry;
 }
 
-function loadHighFidelityCarModel() {
-  carModelLoader.load(
-    "/models/car-concept.glb",
-    (gltf) => {
-      carModelTemplate = prepareHighFidelityCarModel(gltf.scene);
-      const waitingGroups = [...pendingCarGroups];
-      pendingCarGroups.clear();
-      waitingGroups.forEach(attachHighFidelityCarModel);
-      if (waitingGroups.length) showToast("高精度汽车模型加载完成。");
-    },
-    undefined,
-    (error) => {
-      console.error("高精度汽车模型加载失败：", error);
-      pendingCarGroups.clear();
-      showToast("汽车模型加载失败，请刷新页面后重试。");
-    },
-  );
+async function ensureHighFidelityCarModel() {
+  if (carModelTemplate || carModelLoading) return;
+  carModelLoading = true;
+  try {
+    const [{ GLTFLoader }, { RoomEnvironment }] = await Promise.all([
+      import("three/examples/jsm/loaders/GLTFLoader.js"),
+      import("three/examples/jsm/environments/RoomEnvironment.js"),
+    ]);
+    const gltf = await new GLTFLoader().loadAsync("/models/car-concept.glb");
+    carModelTemplate = prepareHighFidelityCarModel(gltf.scene, RoomEnvironment);
+    const waitingGroups = [...pendingCarGroups];
+    pendingCarGroups.clear();
+    waitingGroups.forEach(attachHighFidelityCarModel);
+    if (waitingGroups.length) showToast("高精度汽车模型加载完成。");
+  } catch (error) {
+    console.error("高精度汽车模型加载失败：", error);
+    showToast("汽车模型加载失败，请稍后再次选择汽车重试。");
+  } finally {
+    carModelLoading = false;
+  }
 }
 
-function prepareHighFidelityCarModel(source) {
+function prepareHighFidelityCarModel(source, RoomEnvironment) {
+  if (!carEnvironmentMap) {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    carEnvironmentMap = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmremGenerator.dispose();
+  }
   const customizedMaterials = new Set();
   const hiddenPartNames = new Set(["License Plate", "InteriorSteeringEmblem"]);
   const maxAnisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
@@ -6110,7 +6664,10 @@ function createCar(x, z, rotation) {
   group.userData.erosion = { shape: "wall", width: 4.05, depth: 1.94, localY: 0 };
 
   if (carModelTemplate) attachHighFidelityCarModel(group);
-  else pendingCarGroups.add(group);
+  else {
+    pendingCarGroups.add(group);
+    ensureHighFidelityCarModel();
+  }
 
   compactSandUnder(x, z, 1.88, 0.045);
   return group;
@@ -6853,7 +7410,8 @@ function resetTerrain() {
 }
 
 function spawnSandPuff(x, y, z, count) {
-  for (let i = 0; i < count; i += 1) {
+  const scaledCount = Math.max(1, Math.round(count * qualitySystem.particleScale));
+  for (let i = 0; i < scaledCount; i += 1) {
     const particle = acquireParticle(0xf3d69e, 0.82);
     const size = 0.035 + Math.random() * 0.025;
     particle.scale.setScalar(size);
@@ -6866,6 +7424,7 @@ function spawnSandPuff(x, y, z, count) {
 }
 
 function spawnWetSandDrop(x, y, z) {
+  if (Math.random() > qualitySystem.particleScale) return;
   const particle = acquireParticle(0x9d7d52, 0.72);
   const size = 0.045 + Math.random() * 0.025;
   particle.scale.setScalar(size);
@@ -6903,6 +7462,8 @@ function clearActiveParticles() {
 }
 
 function animate() {
+  animationFrameId = 0;
+  if (document.hidden) return;
   const dt = Math.min(clock.getDelta(), 0.04);
   const elapsed = clock.elapsedTime;
 
@@ -6912,6 +7473,7 @@ function animate() {
   const waterLevel = -0.38 + state.tideRise * 0.95 + wavePulse;
   ocean.water.position.y = waterLevel;
   animateWater(dt, elapsed, waterLevel);
+  updateMarineEcology(dt, elapsed);
   updateMarineLife(dt, elapsed, waterLevel);
   updateLargeMarineLife(dt, elapsed, waterLevel);
   updateFloodProtection(dt);
@@ -6929,14 +7491,15 @@ function animate() {
 
   controls.update();
   renderer.render(scene, camera);
-  requestAnimationFrame(animate);
+  animationFrameId = requestAnimationFrame(animate);
 }
 
 function animateWater(dt, elapsed, waterLevel) {
   waterUpdateElapsed += dt;
-  if (waterUpdateElapsed < 1 / 30) return;
+  const waterInterval = 1 / qualitySystem.waterFps;
+  if (waterUpdateElapsed < waterInterval) return;
   const updateDt = waterUpdateElapsed;
-  waterUpdateElapsed %= 1 / 30;
+  waterUpdateElapsed %= waterInterval;
 
   const pos = ocean.water.geometry.attributes.position;
   for (let i = 0; i < pos.count; i += 1) {
@@ -6947,8 +7510,9 @@ function animateWater(dt, elapsed, waterLevel) {
   }
   pos.needsUpdate = true;
   waterNormalElapsed += updateDt;
-  if (waterNormalElapsed >= 1 / 15) {
-    waterNormalElapsed %= 1 / 15;
+  const normalInterval = 1 / qualitySystem.waterNormalFps;
+  if (waterNormalElapsed >= normalInterval) {
+    waterNormalElapsed %= normalInterval;
     ocean.water.geometry.computeVertexNormals();
   }
   const materialSmoothing = 1 - 0.975 ** (updateDt * 60);
@@ -6965,7 +7529,8 @@ function animateWater(dt, elapsed, waterLevel) {
 
   const foamPositions = ocean.foamFlecks.geometry.attributes.position;
   const foamBase = ocean.foamFlecks.userData.basePositions;
-  for (let i = 0; i < foamPositions.count; i += 1) {
+  const activeFoamCount = Math.min(qualitySystem.foamCount, foamPositions.count);
+  for (let i = 0; i < activeFoamCount; i += 1) {
     const phase = elapsed * 0.72 + i * 0.37;
     foamPositions.setX(i, foamBase[i * 3] + Math.sin(phase) * 0.04);
     foamPositions.setZ(i, foamBase[i * 3 + 2] + Math.cos(phase * 0.8) * 0.04);
@@ -7065,7 +7630,8 @@ function updateWeatherVisuals(dt, elapsed, daylight, night, sunrise, sunset) {
   const raining = rainy;
   weatherVisuals.rain.material.opacity = THREE.MathUtils.lerp(weatherVisuals.rain.material.opacity, raining ? 0.58 : 0, dt * 3);
   if (raining) {
-    for (let i = 0; i < rainPositions.count; i += 1) {
+    const activeRainCount = Math.min(qualitySystem.rainCount, rainPositions.count);
+    for (let i = 0; i < activeRainCount; i += 1) {
       const y = rainPositions.getY(i) - dt * 16;
       rainPositions.setY(i, y < 0.6 ? 18 + Math.random() * 10 : y);
       rainPositions.setX(i, rainPositions.getX(i) + dt * 1.1);
@@ -7117,7 +7683,8 @@ function updateWeatherVisuals(dt, elapsed, daylight, night, sunrise, sunset) {
 
   const sparklePositions = weatherVisuals.sparkles.geometry.attributes.position;
   const sparkleBase = weatherVisuals.sparkles.userData.basePositions;
-  for (let i = 0; i < sparklePositions.count; i += 1) {
+  const activeSparkleCount = Math.min(qualitySystem.sparkleCount, sparklePositions.count);
+  for (let i = 0; i < activeSparkleCount; i += 1) {
     const phase = elapsed * 0.72 + i * 1.37;
     sparklePositions.setX(i, sparkleBase[i * 3] + Math.sin(phase * 0.7) * 0.08);
     sparklePositions.setY(i, sparkleBase[i * 3 + 1] + Math.sin(phase) * 0.18);
@@ -7148,12 +7715,102 @@ function dayPhaseLabel() {
   return "黄昏";
 }
 
+function updateMarineEcology(dt, elapsed) {
+  marineEcology.scanElapsed += dt;
+  if (marineEcology.scanElapsed < marineEcology.scanInterval) return;
+  marineEcology.scanElapsed %= marineEcology.scanInterval;
+
+  const sharks = largeMarineLife.filter((item) => item.kind === "shark" && item.qualityEnabled);
+  const fish = marineLife.filter((item) => item.kind === "fish" && item.qualityEnabled && item.group.visible);
+
+  sharks.forEach((shark) => {
+    const lockedTargetDistance = shark.huntTarget
+      ? Math.hypot(
+        shark.huntTarget.group.position.x - shark.root.position.x,
+        shark.huntTarget.group.position.z - shark.root.position.z,
+      )
+      : Infinity;
+    const lockedTargetValid = shark.huntTarget?.qualityEnabled
+      && shark.huntTarget.group.visible
+      && lockedTargetDistance < 16;
+    if (lockedTargetValid) {
+      shark.huntUntil = elapsed + 2.2;
+      return;
+    }
+
+    let nearestFish = null;
+    let nearestDistance = Infinity;
+    fish.forEach((candidate) => {
+      const distance = Math.hypot(
+        candidate.group.position.x - shark.root.position.x,
+        candidate.group.position.z - shark.root.position.z,
+      );
+      if (distance < nearestDistance) {
+        nearestFish = candidate;
+        nearestDistance = distance;
+      }
+    });
+    if (nearestFish && nearestDistance < 13.5) {
+      shark.huntTarget = nearestFish;
+      shark.huntUntil = elapsed + 2.2;
+    } else {
+      shark.huntTarget = null;
+    }
+  });
+
+  fish.forEach((item) => {
+    let nearestShark = null;
+    let nearestDistance = Infinity;
+    sharks.forEach((shark) => {
+      const distance = Math.hypot(
+        item.group.position.x - shark.root.position.x,
+        item.group.position.z - shark.root.position.z,
+      );
+      if (distance < nearestDistance) {
+        nearestShark = shark;
+        nearestDistance = distance;
+      }
+    });
+    if (!nearestShark || nearestDistance >= 8.5) return;
+
+    let awayX = item.group.position.x - nearestShark.root.position.x;
+    let awayZ = item.group.position.z - nearestShark.root.position.z;
+    const awayLength = Math.hypot(awayX, awayZ) || 1;
+    awayX /= awayLength;
+    awayZ /= awayLength;
+    const escapeDistance = 3.8 + (1 - nearestDistance / 8.5) * 3.2;
+    const escapePoint = clampMarineTarget(
+      item.group.position.x + awayX * escapeDistance,
+      item.group.position.z + awayZ * escapeDistance,
+      1.02,
+      1.3,
+    );
+    item.targetCenter.copy(escapePoint);
+    item.escapeUntil = elapsed + 1.45;
+    item.fleeStrength = THREE.MathUtils.clamp(1 - nearestDistance / 8.5, 0.28, 1);
+  });
+}
+
+function clampMarineTarget(x, z, minRadius, maxRadius) {
+  const normalizedRadius = Math.hypot(x / 17.2, z / 12.8) || 1;
+  const clampedRadius = THREE.MathUtils.clamp(normalizedRadius, minRadius, maxRadius);
+  const scale = clampedRadius / normalizedRadius;
+  return new THREE.Vector2(x * scale, z * scale);
+}
+
 function updateMarineLife(dt, elapsed, waterLevel) {
   for (const item of marineLife) {
+    if (!item.qualityEnabled) {
+      item.group.visible = false;
+      continue;
+    }
+    if (elapsed >= item.escapeUntil) {
+      item.fleeStrength = THREE.MathUtils.lerp(item.fleeStrength, 0, 1 - Math.exp(-dt * 2.4));
+    }
     item.reactionTimer -= dt;
     if (item.reactionTimer <= 0) {
       updateMarineReactionTarget(item, waterLevel);
-      item.reactionTimer = 0.8 + Math.random() * 1.4;
+      item.reactionTimer = item.kind === "crab" ? 0.35 + Math.random() * 0.4 : 0.8 + Math.random() * 1.4;
     }
     item.center.lerp(item.targetCenter, 1 - Math.exp(-dt * (item.kind === "crab" ? 0.52 : 0.34)));
     const targetCuriosity = item.targetCenter.distanceToSquared(item.home) > 0.4 ? 1 : 0;
@@ -7164,7 +7821,8 @@ function updateMarineLife(dt, elapsed, waterLevel) {
     const tideActivity = item.kind === "crab"
       ? 0.76 + Math.abs(state.tideRise - 0.5) * 0.62
       : 0.78 + state.tideRise * 0.48;
-    item.phase += dt * item.speed * tideActivity * (1 + item.curiosity * 0.32) * (state.weather === "rainy" ? 1.12 : 1);
+    const ecologyUrgency = Math.max(item.curiosity, item.fleeStrength);
+    item.phase += dt * item.speed * tideActivity * (1 + ecologyUrgency * 1.15) * (state.weather === "rainy" ? 1.12 : 1);
 
     const wander = Math.sin(item.phase * 1.7 + item.seed) * 0.28;
     const x = item.center.x + Math.cos(item.phase) * item.radiusX + wander;
@@ -7200,31 +7858,111 @@ function updateMarineLife(dt, elapsed, waterLevel) {
 
 function updateLargeMarineLife(dt, elapsed, waterLevel) {
   if (largeMarineEvent.active && elapsed - largeMarineEvent.startedAt >= largeMarineEvent.duration) {
-    largeMarineEvent.active.creature.visible = false;
-    largeMarineEvent.active.splash.visible = false;
+    largeMarineEvent.members.forEach((member) => {
+      member.creature.visible = false;
+      member.splash.visible = false;
+      if (member.spout) member.spout.visible = false;
+    });
     largeMarineEvent.active = null;
+    largeMarineEvent.members = [];
+    largeMarineEvent.followCamera = false;
     largeMarineEvent.nextAt = elapsed + 18 + Math.random() * 22;
   }
 
   if (!largeMarineEvent.active && elapsed >= largeMarineEvent.nextAt) {
     const preferWhale = Math.random() < 0.3;
-    const candidates = largeMarineLife.filter((item) => item.kind === (preferWhale ? "whale" : "dolphin"));
+    const candidates = largeMarineLife.filter(
+      (item) => item.qualityEnabled && item.kind === (preferWhale ? "whale" : "dolphin"),
+    );
     const selected = candidates[Math.floor(Math.random() * candidates.length)];
     if (selected) {
       largeMarineEvent.active = selected;
+      if (selected.kind === "dolphin") {
+        const selectedIndex = candidates.indexOf(selected);
+        largeMarineEvent.members = Array.from(
+          { length: Math.min(3, candidates.length) },
+          (_, offset) => candidates[(selectedIndex + offset) % candidates.length],
+        );
+        largeMarineEvent.followCamera = true;
+      } else {
+        largeMarineEvent.members = [selected];
+        largeMarineEvent.followCamera = false;
+      }
       largeMarineEvent.startedAt = elapsed;
-      largeMarineEvent.duration = selected.kind === "whale" ? 4.8 : 2.7;
+      largeMarineEvent.duration = selected.kind === "whale" ? 4.8 : 3.25;
     }
   }
 
   for (const item of largeMarineLife) {
-    const angle = item.angleOffset + elapsed * item.orbitSpeed;
-    const x = Math.cos(angle) * item.orbitRadius;
-    const z = Math.sin(angle) * item.orbitRadius * item.orbitFlattening;
-    const dx = -Math.sin(angle) * item.orbitRadius;
-    const dz = Math.cos(angle) * item.orbitRadius * item.orbitFlattening;
+    if (!item.qualityEnabled) {
+      item.root.visible = false;
+      continue;
+    }
+    item.root.visible = true;
+    const eventMemberIndex = largeMarineEvent.members.indexOf(item);
+    const inDolphinPod = largeMarineEvent.active?.kind === "dolphin" && eventMemberIndex >= 0;
+    let angle = item.angleOffset + elapsed * item.orbitSpeed;
+    let x = Math.cos(angle) * item.orbitRadius;
+    let z = Math.sin(angle) * item.orbitRadius * item.orbitFlattening;
+    let dx = -Math.sin(angle) * item.orbitRadius;
+    let dz = Math.cos(angle) * item.orbitRadius * item.orbitFlattening;
+    if (inDolphinPod) {
+      const lead = largeMarineEvent.active;
+      angle = largeMarineEvent.followCamera
+        ? Math.atan2(camera.position.z / 12.8, camera.position.x / 17.2) + (elapsed - largeMarineEvent.startedAt - 1.6) * 0.12
+        : lead.angleOffset + elapsed * lead.orbitSpeed;
+      const leadX = Math.cos(angle) * lead.orbitRadius;
+      const leadZ = Math.sin(angle) * lead.orbitRadius * lead.orbitFlattening;
+      dx = -Math.sin(angle) * lead.orbitRadius;
+      dz = Math.cos(angle) * lead.orbitRadius * lead.orbitFlattening;
+      const tangentLength = Math.hypot(dx, dz) || 1;
+      const tangentX = dx / tangentLength;
+      const tangentZ = dz / tangentLength;
+      const lane = eventMemberIndex - 1;
+      x = leadX - tangentX * eventMemberIndex * 1.18 - tangentZ * lane * 0.72;
+      z = leadZ - tangentZ * eventMemberIndex * 1.18 + tangentX * lane * 0.72;
+    }
+
+    if (item.kind === "shark") {
+      const targetVisible = item.huntTarget?.qualityEnabled && item.huntTarget.group.visible && elapsed < item.huntUntil;
+      item.huntBlend = THREE.MathUtils.lerp(item.huntBlend, targetVisible ? 1 : 0, 1 - Math.exp(-dt * 1.8));
+      if (targetVisible && item.huntTarget) {
+        if (!item.huntPointReady) {
+          item.huntPoint.set(item.root.position.x, item.root.position.z);
+          item.huntPointReady = true;
+        }
+        const trackingSmoothing = 1 - Math.exp(-dt * 1.45);
+        item.huntPoint.x = THREE.MathUtils.lerp(
+          item.huntPoint.x,
+          item.huntTarget.group.position.x,
+          trackingSmoothing,
+        );
+        item.huntPoint.y = THREE.MathUtils.lerp(
+          item.huntPoint.y,
+          item.huntTarget.group.position.z,
+          trackingSmoothing,
+        );
+      } else if (item.huntBlend < 0.015) {
+        item.huntPointReady = false;
+      }
+      if (item.huntBlend > 0.01 && item.huntPointReady) {
+        const previousX = item.root.position.x;
+        const previousZ = item.root.position.z;
+        x = THREE.MathUtils.lerp(x, item.huntPoint.x, item.huntBlend * 0.76);
+        z = THREE.MathUtils.lerp(z, item.huntPoint.y, item.huntBlend * 0.76);
+        dx = x - previousX;
+        dz = z - previousZ;
+      }
+    }
     item.root.position.set(x, waterLevel, z);
-    item.root.rotation.y = Math.atan2(-dz, dx);
+    if (Math.hypot(dx, dz) > 0.0005) {
+      item.root.rotation.y = dampAngle(
+        item.root.rotation.y,
+        Math.atan2(-dz, dx),
+        1 - Math.exp(-dt * (item.kind === "shark" ? 4.2 : 7)),
+      );
+    }
+    if (item.kind === "whale") updateWhaleWake(item, elapsed);
 
     const tailSpeed = item.kind === "whale" ? 2.8 : item.kind === "dolphin" ? 5.2 : 3.8;
     const tailAmount = item.kind === "whale" ? 0.2 : item.kind === "dolphin" ? 0.3 : 0.38;
@@ -7239,24 +7977,31 @@ function updateLargeMarineLife(dt, elapsed, waterLevel) {
       item.creature.visible = true;
       item.creature.position.y = -0.24 + Math.sin(elapsed * 0.9 + item.seed) * 0.055;
       item.creature.rotation.z = Math.sin(elapsed * 0.7 + item.seed) * 0.035;
+      item.shadow.material.opacity = 0.14 + Math.sin(elapsed * 0.75 + item.seed) * 0.035;
+      item.shadow.scale.set(0.96 + Math.sin(elapsed * 0.6 + item.seed) * 0.04, 0.94, 1);
       continue;
     }
 
-    const active = largeMarineEvent.active === item;
+    const active = eventMemberIndex >= 0;
     item.creature.visible = active;
     item.splash.visible = active;
+    if (item.spout && !active) item.spout.visible = false;
     if (!active) continue;
 
-    const jump = THREE.MathUtils.clamp(
-      (elapsed - largeMarineEvent.startedAt) / largeMarineEvent.duration,
-      0,
-      1,
-    );
+    const eventDelay = item.kind === "dolphin" ? eventMemberIndex * 0.22 : 0;
+    const jumpDuration = item.kind === "whale" ? largeMarineEvent.duration : 2.72;
+    const localElapsed = elapsed - largeMarineEvent.startedAt - eventDelay;
+    const inJumpWindow = localElapsed >= 0 && localElapsed <= jumpDuration;
+    item.creature.visible = inJumpWindow;
+    item.splash.visible = inJumpWindow;
+    if (!inJumpWindow) continue;
+    const jump = THREE.MathUtils.clamp(localElapsed / jumpDuration, 0, 1);
     const arc = Math.sin(jump * Math.PI);
     const isWhale = item.kind === "whale";
     item.creature.position.y = (isWhale ? -0.68 : -0.36) + arc * (isWhale ? 1.72 : 1.22);
     item.creature.rotation.z = (0.5 - jump) * (isWhale ? 0.72 : 0.92);
     item.creature.rotation.x = Math.sin(jump * Math.PI) * Math.sin(item.seed) * (isWhale ? 0.08 : 0.16);
+    if (isWhale) updateWhaleSpout(item, jump, elapsed);
 
     const splashStrength = Math.min(1, Math.exp(-jump * 18) + Math.exp(-(1 - jump) * 18));
     item.splash.userData.rings.forEach((ring, index) => {
@@ -7268,7 +8013,49 @@ function updateLargeMarineLife(dt, elapsed, waterLevel) {
   }
 }
 
+function dampAngle(current, target, smoothing) {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + delta * smoothing;
+}
+
 function updateMarineReactionTarget(item, waterLevel) {
+  if (item.kind === "fish" && item.escapeUntil > clock.elapsedTime) return;
+
+  if (item.kind === "crab") {
+    let nearestBuild = null;
+    let nearestDistance = Infinity;
+    for (const build of buildObjects) {
+      if (build.collapse > 0.72) continue;
+      const distance = Math.hypot(
+        item.group.position.x - build.group.position.x,
+        item.group.position.z - build.group.position.z,
+      );
+      if (distance < nearestDistance) {
+        nearestBuild = build;
+        nearestDistance = distance;
+      }
+    }
+
+    const avoidanceRadius = nearestBuild ? (nearestBuild.group.userData.baseRadius ?? 0.8) + 2.1 : 0;
+    if (!nearestBuild || nearestDistance >= avoidanceRadius) {
+      item.targetCenter.copy(item.home);
+      return;
+    }
+
+    let awayX = item.group.position.x - nearestBuild.group.position.x;
+    let awayZ = item.group.position.z - nearestBuild.group.position.z;
+    const awayLength = Math.hypot(awayX, awayZ) || 1;
+    awayX /= awayLength;
+    awayZ /= awayLength;
+    item.targetCenter.copy(clampMarineTarget(
+      nearestBuild.group.position.x + awayX * (avoidanceRadius + 0.75),
+      nearestBuild.group.position.z + awayZ * (avoidanceRadius + 0.75),
+      0.92,
+      1.14,
+    ));
+    return;
+  }
+
   let nearest = null;
   let nearestDistance = Infinity;
   for (const build of buildObjects) {
@@ -7803,7 +8590,7 @@ function createAudioSystem() {
   };
   Object.values(tracks).forEach((track) => {
     track.loop = true;
-    track.preload = "auto";
+    track.preload = "none";
     track.volume = 0;
   });
 

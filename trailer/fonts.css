@@ -1,0 +1,9 @@
+@font-face {
+  font-family: "Dreamtide Brush";
+  src: url("../public/fonts/MaShanZheng-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}

@@ -11,7 +11,7 @@
 <p>
   <img src="https://img.shields.io/github/stars/Mingming-up/dreamtide-sandbar?style=for-the-badge&color=F3B562" alt="GitHub stars" />
   <img src="https://img.shields.io/badge/Three.js-r167-101010?style=for-the-badge&logo=threedotjs&logoColor=white" alt="Three.js" />
-  <img src="https://img.shields.io/badge/Vite-5.4-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/Vite-8.2-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/Vanilla-JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=111111" alt="Vanilla JavaScript" />
 </p>
 
@@ -38,8 +38,9 @@ Dreamtide Sandbar（梦幻沙洲）是一款直接运行在浏览器中的 3D �
 - **动态潮汐与侵蚀** — 涨潮、退潮和暂停潮汐；建筑会受潮变色，并在长时间浸水后降低稳定度。
 - **昼夜与天气** — 从清晨、正午到黄昏和星夜，晴天、多云与降雨会同步影响天空、雾效和光照。
 - **鲜活的海岛生态** — 小鱼、小虾、螃蟹与游客在沙洲周围活动，游客还会在潮水靠近时寻找安全高地。
+- **可调画质** — 提供自动、低、中、高四档渲染配置，按设备能力调整阴影、海水、动物与粒子效果。
 - **完整编辑能力** — 支持选择、移动、旋转、复制、删除、修复、加固、撤销与重做。
-- **本地存档** — 3 个存档位、自动保存，以及 JSON 存档导入和导出。
+- **本地存档** — 3 个带缩略图和自定义名称的存档位、自动保存，以及经过校验的 JSON 导入和导出。
 - **自动建城** — 一键生成带塔楼、城墙、拱门、护城河和装饰的基础城堡。
 
 ## 🎮 操作方式
@@ -62,7 +63,7 @@ Dreamtide Sandbar（梦幻沙洲）是一款直接运行在浏览器中的 3D �
 
 ### 环境要求
 
-- Node.js 18+
+- Node.js 20.19+
 - 支持 WebGL 的现代桌面浏览器
 
 ### 本地运行
@@ -97,8 +98,9 @@ npm run dev:stable
 | Vanilla JavaScript | 游戏状态、交互、潮汐、天气、存档与 UI |
 | HTML / CSS | 双页面结构、响应式布局和玻璃拟态 HUD |
 | Vite | 本地开发、多入口构建与生产打包 |
+| Remotion / React | 项目宣传片的分镜、转场、配乐与多格式渲染 |
 
-项目没有使用 React、Vue、Unity 或 Unreal。官网和游戏均由原生前端代码与 Three.js 构建。
+官网和游戏运行时代码由原生前端 JavaScript 与 Three.js 构建；React 仅用于离线生成 Remotion 宣传片。
 
 ## 📁 项目结构
 
@@ -110,10 +112,13 @@ dreamtide-sandbar/
 │   ├── landing.js             # 官网交互
 │   ├── landing.css            # 官网样式
 │   ├── splashCursor.js        # WebGL 流体鼠标效果
+│   ├── saveValidation.js      # 存档导入边界与格式校验
 │   ├── main.js                # 3D 游戏与全部核心系统
 │   └── styles.css             # 游戏 HUD 与界面样式
 ├── public/                    # 图片、音频、字体和 3D 模型资源
 ├── scripts/                   # 构建辅助脚本
+├── test/                      # Node.js 自动化测试
+├── trailer/                   # Remotion 宣传片工程
 ├── TECHNICAL_MANUAL.md        # 技术手册
 └── FEATURE_LOG.md             # 功能记录
 ```
@@ -139,6 +144,15 @@ npm run preview
 - [功能记录](./FEATURE_LOG.md) — 已实现玩法、交互优化与验证记录
 
 ## 📝 更新记录
+
+### 2026-08-09 · 画质、存档与宣传片更新
+
+- **画质与性能** — 新增自动、低、中、高四档画质配置；按档位调整像素比、阴影、海水刷新率、动物数量和天气粒子，并在页面隐藏时暂停渲染。
+- **存档体验** — 存档位新增场景缩略图、自定义名称、保存状态提示和删除确认；导入时限制文件大小并校验对象类型、数量、坐标和内嵌图片，配套加入自动化测试。
+- **海洋生态** — 丰富鱼群逃逸、螃蟹避障、鲨鱼追踪、海豚群跃和鲸鱼喷水尾迹等行为，同时让动物数量随画质档位伸缩。
+- **官网展示** — 更新首页内容布局、实机展示图、字体与预告片弹窗，补充 MP4 回退、海报图和更完整的可访问性细节。
+- **影片预告** — 新增 Remotion 分镜工程、原创配乐生成脚本与海潮环境声，支持一键输出 MP4、WebM 和宣传海报。
+- **加载与部署** — 大型车辆模型与环境贴图改为按需加载，音频不再预加载；部署输出新增内容安全策略、权限策略和安全响应头。
 
 ### 2026-07-26 · 第一次功能完善
 

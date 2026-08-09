@@ -772,6 +772,9 @@ h1 {
 }
 
 .autosave-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   max-width: 112px;
   overflow: hidden;
   color: #718184;
@@ -782,6 +785,52 @@ h1 {
   white-space: nowrap;
 }
 
+.save-state-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d69b4d;
+  box-shadow: 0 0 0 3px rgba(214, 155, 77, 0.12);
+}
+
+.autosave-state[data-save-state="unsaved"] {
+  color: #9a6d35;
+}
+
+.autosave-state[data-save-state="saving"] {
+  color: #507d9b;
+}
+
+.autosave-state[data-save-state="saving"] .save-state-dot {
+  background: #5d9fc5;
+  box-shadow: 0 0 0 3px rgba(93, 159, 197, 0.14);
+  animation: save-state-pulse 900ms ease-in-out infinite;
+}
+
+.autosave-state[data-save-state="saved"] {
+  color: #4b8068;
+}
+
+.autosave-state[data-save-state="saved"] .save-state-dot {
+  background: #58a17e;
+  box-shadow: 0 0 0 3px rgba(88, 161, 126, 0.13);
+}
+
+.autosave-state[data-save-state="error"] {
+  color: #ae514b;
+}
+
+.autosave-state[data-save-state="error"] .save-state-dot {
+  background: #cf645b;
+  box-shadow: 0 0 0 3px rgba(207, 100, 91, 0.14);
+}
+
+@keyframes save-state-pulse {
+  0%, 100% { opacity: 0.42; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
 .save-slot-list {
   display: grid;
   gap: 7px;
@@ -790,7 +839,7 @@ h1 {
 
 .save-slot {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid rgba(63, 92, 116, 0.1);
   border-radius: 13px;
@@ -806,6 +855,7 @@ h1 {
 
 .save-slot-load,
 .save-slot-write,
+.save-slot-rename,
 .save-slot-delete,
 .save-file-actions button {
   border: 0;
@@ -817,11 +867,11 @@ h1 {
 
 .save-slot-load {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 24px 58px minmax(0, 1fr);
+  gap: 7px;
   align-items: center;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 8px;
   text-align: left;
 }
 
@@ -851,9 +901,33 @@ h1 {
   white-space: nowrap;
 }
 
-.save-slot-write {
+.save-slot-thumbnail {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 36px;
+  overflow: hidden;
+  border: 1px solid rgba(63, 92, 116, 0.1);
+  border-radius: 7px;
+  color: rgba(102, 86, 179, 0.58);
+  background: linear-gradient(145deg, rgba(210, 231, 231, 0.76), rgba(231, 227, 247, 0.7));
+  font-size: 18px;
+}
+
+.save-slot-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.save-slot-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 43px);
   align-self: stretch;
-  min-width: 52px;
+}
+
+.save-slot-write {
+  grid-column: 1 / -1;
   border-left: 1px solid rgba(63, 92, 116, 0.08);
   color: #6656b3;
   background: rgba(120, 101, 202, 0.07);
@@ -861,23 +935,33 @@ h1 {
   font-weight: 900;
 }
 
+.save-slot-rename,
 .save-slot-delete {
   display: none;
-  align-self: stretch;
-  min-width: 52px;
+  border-top: 1px solid rgba(63, 92, 116, 0.08);
   border-left: 1px solid rgba(163, 76, 72, 0.12);
-  color: #a34c48;
-  background: rgba(189, 91, 83, 0.06);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
 }
 
+.save-slot-rename {
+  color: #526f79;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.save-slot-delete {
+  color: #a34c48;
+  background: rgba(189, 91, 83, 0.06);
+}
+
+.save-slot.has-save .save-slot-rename,
 .save-slot.has-save .save-slot-delete {
   display: block;
 }
 
 .save-slot-load:hover,
 .save-slot-write:hover,
+.save-slot-rename:hover,
 .save-slot-delete:hover,
 .save-file-actions button:hover {
   background: rgba(255, 255, 255, 0.46);
@@ -908,6 +992,268 @@ h1 {
 
 .save-note {
   margin-top: 8px;
+}
+
+.quality-panel {
+  width: min(410px, calc(100vw - 44px));
+  padding-right: 50px;
+}
+
+.quality-heading {
+  position: relative;
+  padding-right: 86px;
+}
+
+.quality-symbol {
+  background: linear-gradient(135deg, #65c8bb, #347b92);
+}
+
+.quality-active {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  color: #487b82;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.quality-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 14px;
+  padding: 4px;
+  border: 1px solid rgba(57, 101, 109, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.quality-preset-grid button {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #5a747a;
+  background: transparent;
+  cursor: pointer;
+  font: 850 10px/1 inherit;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.quality-preset-grid button:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.quality-preset-grid button.is-active {
+  border-color: rgba(62, 143, 149, 0.24);
+  color: #316b73;
+  background: rgba(220, 245, 239, 0.7);
+  box-shadow: 0 6px 15px rgba(50, 113, 119, 0.11);
+}
+
+.quality-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.quality-metrics > div {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(57, 101, 109, 0.09);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.quality-metrics span {
+  color: #70868a;
+  font-size: 9px;
+}
+
+.quality-metrics strong {
+  overflow: hidden;
+  color: #345b64;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality-note {
+  margin-top: 9px;
+}
+
+.save-confirm-backdrop {
+  position: fixed;
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(14, 30, 37, 0.46);
+  backdrop-filter: blur(10px) saturate(0.85);
+  animation: save-confirm-fade-in 180ms ease-out both;
+}
+
+.save-confirm-backdrop[hidden] {
+  display: none;
+}
+
+.save-confirm-dialog {
+  position: relative;
+  width: min(390px, calc(100vw - 40px));
+  padding: 25px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 24px;
+  color: #294b53;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.9), transparent 38%),
+    linear-gradient(145deg, rgba(244, 249, 246, 0.96), rgba(224, 235, 235, 0.94));
+  box-shadow: 0 30px 90px rgba(9, 27, 35, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  animation: save-confirm-pop-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.save-confirm-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(65, 93, 101, 0.1);
+  border-radius: 50%;
+  color: #60777b;
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font: 500 20px/1 inherit;
+}
+
+.save-confirm-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 13px;
+  place-items: center;
+  border: 1px solid rgba(195, 82, 70, 0.2);
+  border-radius: 15px;
+  color: #fff4ef;
+  background: linear-gradient(145deg, #d87b6a, #b94e49);
+  box-shadow: 0 12px 28px rgba(169, 66, 59, 0.24);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.save-confirm-dialog h2 {
+  margin: 3px 0 7px;
+  color: #274c55;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.save-confirm-message {
+  margin: 0;
+  color: #667e82;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.save-confirm-summary {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  margin-top: 18px;
+  padding: 10px;
+  border: 1px solid rgba(64, 91, 100, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.save-confirm-thumbnail {
+  display: grid;
+  width: 76px;
+  height: 44px;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 9px;
+  color: rgba(102, 86, 179, 0.62);
+  background: linear-gradient(145deg, rgba(210, 231, 231, 0.88), rgba(231, 227, 247, 0.82));
+  font-size: 20px;
+}
+
+.save-confirm-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.save-confirm-summary > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.save-confirm-summary strong {
+  overflow: hidden;
+  color: #31535b;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-confirm-summary small {
+  overflow: hidden;
+  color: #74878a;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.save-confirm-actions button {
+  min-height: 42px;
+  border: 1px solid rgba(58, 88, 96, 0.12);
+  border-radius: 12px;
+  color: #45636a;
+  background: rgba(255, 255, 255, 0.54);
+  cursor: pointer;
+  font: 850 12px/1 inherit;
+}
+
+.save-confirm-actions .save-confirm-danger {
+  border-color: rgba(184, 70, 61, 0.28);
+  color: #fff8f4;
+  background: linear-gradient(145deg, #d87565, #b94c48);
+  box-shadow: 0 10px 24px rgba(170, 66, 59, 0.2);
+}
+
+.save-confirm-close:hover,
+.save-confirm-actions button:not(.save-confirm-danger):hover {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.save-confirm-actions .save-confirm-danger:hover {
+  background: linear-gradient(145deg, #e28270, #c6534e);
+}
+
+@keyframes save-confirm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes save-confirm-pop-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Bubble Menu: adapted from React Bits for the game's vanilla DOM. */
@@ -1464,7 +1810,11 @@ h1 {
   .glass-icon-front,
   .glass-icon-label,
   .bubble-menu .menu-line,
+  .save-state-dot,
+  .save-confirm-backdrop,
+  .save-confirm-dialog,
   .ui-card::before {
     transition: none;
+    animation: none;
   }
 }

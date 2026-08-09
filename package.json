@@ -3,16 +3,33 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:stable": "vite --host 127.0.0.1 --port 5175 --strictPort",
-    "check": "node --check src/main.js && node --check src/landing.js && node --check src/splashCursor.js && node --check src/clickSpark.js && node --check scripts/prepare-sites-output.mjs && node --check scripts/clean-dist.mjs",
+    "trailer:audio": "node scripts/generate-trailer-audio.mjs",
+    "trailer:studio": "remotion studio trailer/index.ts --no-open",
+    "trailer:still": "remotion still trailer/index.ts DreamtideTrailer public/video/dreamtide-poster.jpg --frame=320 --scale=1.5 --image-format=jpeg --jpeg-quality=95 --overwrite",
+    "trailer:render:mp4": "remotion render trailer/index.ts DreamtideTrailer public/video/dreamtide-trailer.mp4 --codec=h264 --audio-codec=aac --crf=20 --scale=1.5 --overwrite",
+    "trailer:render:webm": "remotion render trailer/index.ts DreamtideTrailer public/video/dreamtide-trailer.webm --codec=vp8 --audio-codec=opus --crf=8 --scale=1.5 --overwrite",
+    "trailer:render": "npm run trailer:audio && npm run trailer:render:mp4 && npm run trailer:render:webm",
+    "check": "node --check src/main.js && node --check src/landing.js && node --check src/splashCursor.js && node --check src/clickSpark.js && node --check src/saveValidation.js && node --check scripts/prepare-sites-output.mjs && node --check scripts/clean-dist.mjs && npm test",
+    "test": "node --test",
     "build": "node scripts/clean-dist.mjs && vite build && node scripts/prepare-sites-output.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "three": "^0.167.1",
-    "vite": "^5.4.11"
+    "three": "^0.167.1"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@remotion/cli": "^4.0.507",
+    "@remotion/media": "^4.0.507",
+    "@remotion/transitions": "^4.0.507",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "remotion": "^4.0.507",
+    "vite": "^8.2.1"
+  }
 }

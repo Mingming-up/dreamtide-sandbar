@@ -2,15 +2,27 @@ import "./landing.css";
 import { createSplashCursor } from "./splashCursor.js";
 import { createClickSpark } from "./clickSpark.js";
 
+// 改为 "legacy" 即可恢复原来的第二屏，原有 HTML、样式和交互均保留。
+const WORLD_SECTION_VARIANT = "legacy";
+const useGameplayWorld = WORLD_SECTION_VARIANT === "gameplay";
+document.documentElement.classList.toggle("world-gameplay-enabled", useGameplayWorld);
+document.querySelectorAll(".world-legacy-content").forEach((element) => {
+  element.hidden = useGameplayWorld;
+});
+const gameplayShowcase = document.querySelector(".gameplay-showcase");
+if (gameplayShowcase) gameplayShowcase.hidden = !useGameplayWorld;
+
 const featureCards = [...document.querySelectorAll(".feature-card")];
+const worldSection = document.querySelector(".world-section");
 const selectedFeatureTitle = document.querySelector("#selected-feature-title");
 const selectedFeatureDetail = document.querySelector("#selected-feature-detail");
 const revealItems = [...document.querySelectorAll(".reveal-on-scroll")];
-const splitTextLines = [...document.querySelectorAll(".split-text-title > span")];
+const splitTextTitles = [...document.querySelectorAll(".split-text-title")];
 const variableProximityTitles = [...document.querySelectorAll(".variable-proximity-title")];
 const specularButtons = [...document.querySelectorAll(".specular-button")];
 const borderGlowTargets = [...document.querySelectorAll(".border-glow-target")];
 const hero = document.querySelector(".hero");
+const heroPrimaryButton = document.querySelector(".hero-actions .primary-button");
 const pageStage = document.querySelector(".page-stage");
 const pagePanels = [...document.querySelectorAll(".page-panel")];
 const pageNav = document.querySelector(".page-nav");
@@ -19,6 +31,26 @@ const trailerDialog = document.querySelector(".trailer-dialog");
 const trailerTrigger = document.querySelector(".trailer-trigger");
 const trailerClose = document.querySelector(".trailer-close");
 const trailerVideo = trailerDialog?.querySelector("video");
+
+function warmTrailerVideo() {
+  if (!trailerVideo || trailerVideo.dataset.warmed === "true") return;
+  trailerVideo.dataset.warmed = "true";
+  trailerVideo.preload = "auto";
+  trailerVideo.load();
+}
+
+function setTrailerLoading(isLoading) {
+  trailerDialog?.classList.toggle("is-video-loading", isLoading);
+  trailerVideo?.setAttribute("aria-busy", String(isLoading));
+}
+
+trailerTrigger?.addEventListener("pointerenter", warmTrailerVideo, { once: true });
+trailerTrigger?.addEventListener("focus", warmTrailerVideo, { once: true });
+trailerVideo?.addEventListener("waiting", () => {
+  if (trailerDialog?.open) setTrailerLoading(true);
+});
+trailerVideo?.addEventListener("canplay", () => setTrailerLoading(false));
+trailerVideo?.addEventListener("playing", () => setTrailerLoading(false));
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const destroySplashCursor = reducedMotion.matches
   ? () => {}
@@ -37,19 +69,29 @@ if (import.meta.hot) {
 let activePage = 0;
 let transitionLocked = false;
 
-let splitTextIndex = 0;
-splitTextLines.forEach((line) => {
-  const characters = [...line.textContent];
-  line.setAttribute("aria-hidden", "true");
-  line.replaceChildren(
-    ...characters.map((character) => {
-      const span = document.createElement("span");
-      span.className = "split-text-char";
-      span.style.setProperty("--split-index", splitTextIndex++);
-      span.textContent = character;
-      return span;
-    }),
-  );
+function syncSharedCtaPosition() {
+  if (!heroPrimaryButton || !pageStage) return;
+  const stageBounds = pageStage.getBoundingClientRect();
+  const buttonBounds = heroPrimaryButton.getBoundingClientRect();
+  pageStage.style.setProperty("--shared-cta-left", `${buttonBounds.left - stageBounds.left}px`);
+  pageStage.style.setProperty("--shared-cta-top", `${buttonBounds.top - stageBounds.top}px`);
+}
+
+splitTextTitles.forEach((title) => {
+  let splitTextIndex = 0;
+  title.querySelectorAll(":scope > span").forEach((line) => {
+    const characters = [...line.textContent];
+    line.setAttribute("aria-hidden", "true");
+    line.replaceChildren(
+      ...characters.map((character) => {
+        const span = document.createElement("span");
+        span.className = "split-text-char";
+        span.style.setProperty("--split-index", splitTextIndex++);
+        span.textContent = character;
+        return span;
+      }),
+    );
+  });
 });
 
 if (!reducedMotion.matches) {
@@ -110,14 +152,20 @@ if (!reducedMotion.matches) {
 }
 
 function selectFeature(card) {
+  const shouldCollapse = card.classList.contains("is-active");
+
   featureCards.forEach((item) => {
-    const selected = item === card;
+    const selected = !shouldCollapse && item === card;
     item.classList.toggle("is-active", selected);
     item.setAttribute("aria-pressed", String(selected));
+    item.setAttribute("aria-expanded", String(selected));
   });
 
-  selectedFeatureTitle.textContent = card.dataset.title;
-  selectedFeatureDetail.textContent = card.dataset.detail;
+  worldSection?.classList.toggle("has-expanded-feature", !shouldCollapse);
+  if (!shouldCollapse) {
+    selectedFeatureTitle.textContent = card.dataset.title;
+    selectedFeatureDetail.textContent = card.dataset.detail;
+  }
 }
 
 featureCards.forEach((card) => {
@@ -295,8 +343,10 @@ pageNavButtons.forEach((button) => {
 });
 
 trailerTrigger?.addEventListener("click", () => {
+  warmTrailerVideo();
   trailerDialog.showModal();
   trailerVideo.currentTime = 0;
+  setTrailerLoading(trailerVideo.readyState < HTMLMediaElement.HAVE_FUTURE_DATA);
   trailerVideo.play().catch(() => {});
 });
 
@@ -305,6 +355,7 @@ trailerDialog?.addEventListener("click", (event) => {
   if (event.target === trailerDialog) trailerDialog.close();
 });
 trailerDialog?.addEventListener("close", () => {
+  setTrailerLoading(false);
   trailerVideo.pause();
   trailerVideo.currentTime = 0;
   trailerTrigger?.focus();
@@ -348,4 +399,11 @@ window.addEventListener("keydown", (event) => {
 });
 
 const initialHashIndex = pagePanels.findIndex((panel) => `#${panel.id}` === window.location.hash);
+syncSharedCtaPosition();
 if (initialHashIndex > 0) showPage(initialHashIndex);
+window.addEventListener("resize", () => {
+  if (activePage === 0) syncSharedCtaPosition();
+});
+document.fonts?.ready.then(() => {
+  if (activePage === 0) syncSharedCtaPosition();
+});
